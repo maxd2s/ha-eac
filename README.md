@@ -4,6 +4,8 @@ Read your Cyprus EAC DSO meter account in Home Assistant, with delayed import/ex
 
 This fork of [SantaFox/ha-eac](https://github.com/SantaFox/ha-eac) adds constrained HTTPS transport, reauthentication, bounded history imports, and continuous statistics across channel changes on the same meter. It uses the pinned [`eac-dso-portal`](https://github.com/SantaFox/eac-dso-portal) parser. Upstream attribution and the MIT license are retained.
 
+Version **0.4.2** is the initial public beta. See the [changelog](CHANGELOG.md) and documented data limitations before relying on it for billing comparisons.
+
 ## Requirements
 
 - Home Assistant Core **2026.10.4 or newer**; see [validation evidence](SECURITY_REVIEW.md) for versions actually tested.

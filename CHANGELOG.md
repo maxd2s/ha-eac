@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.2 — 2026-11-11
+## 0.4.2 — 2026-11-11 (initial public beta)
 
 - Restrict adapter requests to supported portal routes; reject invalid bearer-token header characters, deeply nested JSON and non-standard JSON constants.
 - Sanitize failures from the upstream response parser before they can reach HA error reporting.

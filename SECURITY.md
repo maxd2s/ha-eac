@@ -2,7 +2,7 @@
 
 ## Scope
 
-This is an unofficial Home Assistant custom integration. It runs with the privileges of Home Assistant Core, not in a sandbox. Review the code and its pinned dependencies before installation. The current maintained code is on `harden-modernize-eac`; see the version in `manifest.json` and the [review](SECURITY_REVIEW.md). No independent certification or guarantee is claimed.
+This is an unofficial Home Assistant custom integration. It runs with the privileges of Home Assistant Core, not in a sandbox. Review the code and its pinned dependencies before installation. The maintained code is on `main`; published versions are tagged; see the version in `manifest.json` and the [review](SECURITY_REVIEW.md). No independent certification or guarantee is claimed.
 
 ## Network and credentials
 

@@ -1,6 +1,6 @@
 # Security, reliability and maintenance review
 
-Reviewed **2026-11-11**, component **0.4.2**, fork `maxd2s/ha-eac`, branch `harden-modernize-eac`. Original upstream base: `SantaFox/ha-eac@c783990a811e99b6cd67cd5e9f8498dbaab67c62`.
+Reviewed **2026-11-11**, component **0.4.2**, fork `maxd2s/ha-eac`, release `v0.4.2`. Original upstream base: `SantaFox/ha-eac@c783990a811e99b6cd67cd5e9f8498dbaab67c62`.
 
 ## Result and scope
 
@@ -8,7 +8,7 @@ Reviewed runtime code, the installed source of pinned `eac-dso-portal==0.2.1`, c
 
 No critical/high-severity vulnerability or unrelated telemetry/execution behavior was identified in this scoped review. Several privacy, availability and deployment reliability gaps were fixed below. This is a code review plus synthetic tests and known-advisory scans, not an independent penetration test, audit of EAC's servers, or guarantee of safety.
 
-This revision was tested locally with synthetic portal responses. It was **not deployed to production Home Assistant** as part of this review. Earlier integration versions have been used with a live account, but that is not a substitute for testing these changes.
+This revision was tested locally with synthetic portal responses and subsequently deployed to Home Assistant 2026.11.1. Post-restart validation confirmed the entry loaded, a live portal fetch succeeded, all ten checked meter entities were available, recent recorded statistics were preserved, dashboard/energy settings were unchanged, and no integration errors appeared in the checked logs. All 18 deployed files matched the reviewed hashes. No account identifiers or credentials are included in this report.
 
 ## New findings fixed in 0.4.2
 
