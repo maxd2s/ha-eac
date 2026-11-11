@@ -44,7 +44,13 @@ class EacInsightsCard extends HTMLElement {
       const path=index=>{let previous=null;return points.map(p=>{if(!Number.isFinite(p[index])){previous=null;return '';}const move=previous===null||p[0]-previous>1800000;previous=p[0];return `${move?'M':'L'}${x(p[0]).toFixed(2)},${y(p[index]*2).toFixed(2)}`;}).join(' ');};
       const ticks=[0,1,2,3,4].map(i=>`<line class="grid" x1="44" x2="544" y1="${y(top*i/4)}" y2="${y(top*i/4)}"/><text x="36" y="${y(top*i/4)+4}" text-anchor="end">${fmt(top*i/4,1)}</text>`).join('');
       const labels=[0,1,2,3,4].map(i=>{const t=from+(to-from)*i/4;const label=new Date(t).toLocaleString(undefined,{timeZone:zone,...(this._day?{hour:'2-digit',minute:'2-digit',hour12:false}:{month:'short',day:'numeric'})});return `<text x="${x(t)}" y="211" text-anchor="middle">${esc(label)}</text>`;}).join('');
-      history=`<svg viewBox="0 0 580 230" role="img" aria-label="Half-hour grid import and export in average kilowatts"><text x="44" y="16">Average kW per half-hour</text>${ticks}${labels}<path d="${path(1)}" stroke="#42a5f5"/><path d="${path(2)}" stroke="#f9b938"/></svg>`;
+      const isolated=[1,2].map(index=>points.map((p,i)=>{
+        if(!Number.isFinite(p[index]))return '';
+        const before=points[i-1],after=points[i+1];
+        const adjacent=q=>q&&Number.isFinite(q[index])&&Math.abs(q[0]-p[0])===1800000;
+        return !adjacent(before)&&!adjacent(after)?`<circle cx="${x(p[0])}" cy="${y(p[index]*2)}" r="2.5" fill="${index===1?'#42a5f5':'#f9b938'}"/>`:'';
+      }).join('')).join('');
+      history=`<svg viewBox="0 0 580 230" role="img" aria-label="Half-hour grid import and export in average kilowatts"><text x="44" y="16">Average kW per half-hour</text>${ticks}${labels}<path d="${path(1)}" stroke="#42a5f5"/><path d="${path(2)}" stroke="#f9b938"/>${isolated}</svg>`;
     }
     const slots=d.surplus_by_half_hour||[];const top=Math.max(1,...slots.map(p=>Number.isFinite(p[1])?p[1]:0));
     const bars=slots.map(p=>{if(!Number.isFinite(p[1]))return '';const h=p[1]/top*105;const label=`${String(Math.floor(p[0]/2)).padStart(2,'0')}:${p[0]%2?'30':'00'}`;return `<rect x="${44+p[0]*10.4}" y="${135-h}" width="8" height="${h}" rx="1" fill="#f9b938"><title>${label} · ${fmt(p[1])} kW · ${p[2]} observations</title></rect>`;}).join('');
@@ -55,7 +61,7 @@ class EacInsightsCard extends HTMLElement {
     <div class="kpis"><div class="kpi"><div class="label">Overnight baseline</div><strong>${fmt(d.overnight_baseline_kw)}</strong><small>kW · ${d.complete_nights} complete nights<br>${hour(d.night_start_hour)}–${hour(d.night_end_hour)}</small></div><div class="kpi"><div class="label">Highest demand</div><strong>${fmt(d.peak_import_kw)}</strong><small>kW · 30-min average<br>${esc(when(d.peak_import_at))}</small></div><div class="kpi"><div class="label">Tariff code</div><strong>${esc(tariff)}</strong><small>Reported by DSO<br>Prices not inferred</small></div></div>
     <h3>Import vs export</h3><div class="controls"><select id="day" aria-label="History date"><option value="">Full ${d.window_days}-day window</option>${dates}</select></div>${history}<div class="legend"><span class="blue">● Grid import</span><span class="gold">● Grid export</span></div>
     <p>Coverage: import ${fmt(d.import_coverage_percent,1)}% · export ${fmt(d.export_coverage_percent,1)}%. Missing intervals break the lines; they are not zero.</p>
-    <h3>Usual surplus-solar hours</h3>${surplus}<p>Average grid export by half-hour of day over the selected history window. Received zeros are included; missing samples are excluded. This is historical surplus, not a forecast.</p>
+    <h3>Usual surplus-solar hours</h3>${surplus}<p>Average grid export by half-hour of day across all ${d.window_days} retained calendar days. Received zeros are included; missing samples are excluded. This is historical surplus, not a forecast.</p>
     <div class="details">${esc(d.model||'Meter model unavailable')} · ${esc(d.phases||'—')} phases · entitlement ${esc(d.load_entitlement||'—')} ${esc(d.load_entitlement_unit||'')}<br>Tariff source: ${esc(d.tariff?.source||'Not available')} · checked ${esc(when(d.tariff?.retrieved_at))}<br>Baseline = median of complete nights’ average grid demand. It includes any overnight charging or heating. Neither chart measures total solar generation or whole-house consumption.<br>History length and overnight hours are configurable in the integration options. Reports refresh daily; readings follow your configured polling schedule.</div></ha-card>`;
     this._events();
   }
