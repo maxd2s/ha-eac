@@ -31,8 +31,8 @@ async def test_full_setup_creates_sensors(
 
     states = [s for s in hass.states.async_all() if s.entity_id.startswith("sensor.")]
     # Two channel sensors + three per-meter diagnostics (measured_at,
-    # received_at, data_lag) for the single active meter.
-    assert len(states) == 5
+    # received_at, data_lag), plus four profile/tariff sensors.
+    assert len(states) == 9
 
     # Check the cumulative total sensor. It must NOT advertise state_class:
     # for a delayed-data provider the canonical history lives in external

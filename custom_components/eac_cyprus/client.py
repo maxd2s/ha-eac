@@ -11,7 +11,7 @@ import json
 import math
 import re
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any
 
@@ -21,11 +21,12 @@ from eac_dso_portal import EacClient as UpstreamClient
 from eac_dso_portal.exceptions import EacRateLimitError
 
 from .const import DEFAULT_BASE_URL
+from .tariff import parse_tariff_code
 
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=10, sock_read=20)
 _ENDPOINT = re.compile(
-    r"/api/portal/(?:login|userDetails|servicePoints(?:/[A-Za-z0-9_-]{1,128})?|readings/list)"
+    r"/api/portal/(?:login|userDetails|servicePoints(?:/[A-Za-z0-9_-]{1,128})?|readings/list|report/consumption/html)"
 )
 _PARSE_ERRORS = (
     ValueError,
@@ -123,6 +124,8 @@ class EacClient(UpstreamClient):
                 body.extend(chunk)
                 if len(body) > MAX_RESPONSE_BYTES:
                     raise EacApiError(200, "Portal response exceeds size limit")
+            if path == "/api/portal/report/consumption/html":
+                return status, body.decode("utf-8", errors="replace")
             try:
                 return status, _bounded_json(body)
             except (ValueError, UnicodeError, RecursionError):
@@ -188,6 +191,20 @@ class EacClient(UpstreamClient):
                     raise EacAuthError("Portal authorization failed")
                 raise EacApiError(status, "Portal request failed")
         raise EacAuthError("Portal authorization failed")
+
+    async def get_tariff_code(self, sp_id, serial, now):
+        body = {
+            "spId": sp_id,
+            "serialNumber": serial,
+            "dateFrom": (now - timedelta(days=1))
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z"),
+            "dateTo": now.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        }
+        html = await self._request(
+            "POST", "/api/portal/report/consumption/html", json_body=body
+        )
+        return parse_tariff_code(html)
 
     async def get_user_details(self):
         try:

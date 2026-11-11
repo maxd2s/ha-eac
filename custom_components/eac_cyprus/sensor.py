@@ -190,6 +190,10 @@ async def async_setup_entry(
                             EacMeasuredAtSensor,
                             EacReceivedAtSensor,
                             EacLagSensor,
+                            EacProfileCoverageSensor,
+                            EacOvernightSensor,
+                            EacPeakDemandSensor,
+                            EacTariffSensor,
                         )
                     )
         if new:
@@ -405,4 +409,78 @@ class EacTodaySensor(_MeterEntity, SensorEntity):
             key: value
             for key, value in profile.items()
             if key != "points" or self._direction == "net"
+        }
+
+
+class EacProfileCoverageSensor(_MeterEntity, SensorEntity):
+    """Small discovery entity; interval arrays stay in the protected cache API."""
+
+    _attr_name = "Profile coverage"
+    _attr_native_unit_of_measurement = "%"
+    _attr_suggested_display_precision = 1
+    _suffix = "profile_coverage"
+    _field = "import_coverage_percent"
+
+    def __init__(self, coordinator, sp_id, meter_key):
+        super().__init__(coordinator, sp_id, meter_key)
+        self._attr_unique_id = f"{meter_key}_{self._suffix}"
+        self._attr_device_info = meter_device_info(self._meter, coordinator)
+
+    @property
+    def native_value(self):
+        ms = self._meter
+        return (ms.insights or {}).get(self._field) if ms else None
+
+    @property
+    def extra_state_attributes(self):
+        ms = self._meter
+        return (
+            {
+                k: v
+                for k, v in (ms.insights or {}).items()
+                if k not in ("points", "surplus_by_half_hour")
+            }
+            if ms
+            else {}
+        )
+
+
+class EacOvernightSensor(EacProfileCoverageSensor):
+    _attr_name = "Typical overnight grid demand"
+    _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_suggested_display_precision = 2
+    _suffix = "overnight_baseline"
+    _field = "overnight_baseline_kw"
+
+
+class EacPeakDemandSensor(EacProfileCoverageSensor):
+    _attr_name = "Highest half-hour grid demand"
+    _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_suggested_display_precision = 2
+    _suffix = "peak_demand"
+    _field = "peak_import_kw"
+
+
+class EacTariffSensor(EacProfileCoverageSensor):
+    _attr_name = "Tariff code"
+    _attr_native_unit_of_measurement = None
+    _attr_suggested_display_precision = None
+    _suffix = "tariff_code"
+
+    @property
+    def native_value(self):
+        return (self._meter.tariff or {}).get("code") if self._meter else None
+
+    @property
+    def extra_state_attributes(self):
+        ms = self._meter
+        if not ms:
+            return {}
+        return {
+            **(ms.tariff or {}),
+            "phases": ms.service_point.phases,
+            "load_entitlement": ms.service_point.load_entitlement,
+            "load_entitlement_unit": ms.service_point.load_entitlement_uom,
         }

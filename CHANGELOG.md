@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0
+
+- Add per-account, per-meter interval caches and authenticated, entity-permission-scoped profile access. Default retention is 30 calendar days; 7–90 days are configurable.
+- Add typical overnight demand, highest half-hour demand, profile coverage and DSO-reported tariff sensors. Overnight hours are configurable; tariff codes are discovered and cached without storing report contents.
+- Add an account-independent insights dashboard with automatic meter discovery, historical/day charts and average surplus export by half-hour. Import-only accounts and unavailable channels are handled without inventing zero readings.
+- Keep cumulative daily/monthly register statistics separate and unchanged.
+
+
 ## 0.4.3
 
 - Add current-day provisional import/export/net sensors from matching half-hour readings, with coverage and gap diagnostics. Reuse existing requests; keep register statistics unchanged.

@@ -36,12 +36,15 @@
         "data": {
           "scan_interval_minutes": "Polling interval",
           "history_days": "History window (days fetched on each refresh)",
-          "stale_threshold_days": "Data-stale threshold (days without a fresh reading before the diagnostic flags)"
+          "stale_threshold_days": "Data-stale threshold (days without a fresh reading before the diagnostic flags)",
+          "profile_days": "Interval profile retention (7–90 days)",
+          "night_start_hour": "Overnight window start (Cyprus hour, 0–23)",
+          "night_end_hour": "Overnight window end (Cyprus hour, 0–23)"
         }
       }
     },
     "abort": {
-      "invalid_options": "Choose a listed polling interval, 1–60 history days and 1–30 stale days."
+      "invalid_options": "Choose a supported polling interval, 1–60 history days, 1–30 stale days, 7–90 profile days, and different overnight start/end hours (0–23)."
     }
   }
 }

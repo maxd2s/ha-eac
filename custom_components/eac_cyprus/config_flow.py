@@ -18,6 +18,14 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from .analytics import (
+    CONF_NIGHT_END,
+    CONF_NIGHT_START,
+    CONF_PROFILE_DAYS,
+    DEFAULT_NIGHT_END,
+    DEFAULT_NIGHT_START,
+    DEFAULT_PROFILE_DAYS,
+)
 from .client import EacClient, validate_base_url
 from .const import (
     CONF_BASE_URL,
@@ -188,10 +196,19 @@ class EacOptionsFlow(OptionsFlow):
                         CONF_STALE_THRESHOLD_DAYS, DEFAULT_STALE_THRESHOLD_DAYS
                     )
                 )
+                profile_days = int(
+                    user_input.get(CONF_PROFILE_DAYS, DEFAULT_PROFILE_DAYS)
+                )
+                night_start = int(user_input.get(CONF_NIGHT_START, DEFAULT_NIGHT_START))
+                night_end = int(user_input.get(CONF_NIGHT_END, DEFAULT_NIGHT_END))
                 valid = (
                     interval in SCAN_INTERVAL_CHOICES
                     and 1 <= history <= 60
                     and 1 <= stale <= 30
+                    and 7 <= profile_days <= 90
+                    and 0 <= night_start <= 23
+                    and 0 <= night_end <= 23
+                    and night_start != night_end
                 )
             except (ValueError, TypeError, KeyError):
                 valid = False
@@ -201,6 +218,9 @@ class EacOptionsFlow(OptionsFlow):
                 CONF_SCAN_INTERVAL_MINUTES: interval,
                 CONF_HISTORY_DAYS: history,
                 CONF_STALE_THRESHOLD_DAYS: stale,
+                CONF_PROFILE_DAYS: profile_days,
+                CONF_NIGHT_START: night_start,
+                CONF_NIGHT_END: night_end,
             }
             return self.async_create_entry(title="", data=user_input)
 
@@ -252,4 +272,23 @@ class EacOptionsFlow(OptionsFlow):
                 ),
             }
         )
+        for key, default, low, high in (
+            (CONF_PROFILE_DAYS, DEFAULT_PROFILE_DAYS, 7, 90),
+            (CONF_NIGHT_START, DEFAULT_NIGHT_START, 0, 23),
+            (CONF_NIGHT_END, DEFAULT_NIGHT_END, 0, 23),
+        ):
+            schema = schema.extend(
+                {
+                    vol.Optional(
+                        key, default=current.get(key, default)
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=low,
+                            max=high,
+                            step=1,
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    )
+                }
+            )
         return self.async_show_form(step_id="init", data_schema=schema)

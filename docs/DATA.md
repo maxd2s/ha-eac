@@ -81,3 +81,49 @@ Optional dependency-free dashboard card: see [dashboard/README.md](../dashboard/
 - Historical imports are bounded to 3,650 days and 10 minutes per account. Recorder queueing is asynchronous and not transactional across an import.
 - Portal errors or omitted channels can make affected entities unavailable; a successful account refresh does not imply every channel was delivered.
 - Statistic IDs and device labels include meter/service-point identifiers. Treat database backups and diagnostic screenshots as private.
+
+## Cached interval insights and tariffs (0.5.0)
+
+The account coordinator keeps a per-meter, per-direction cache in HA storage,
+separate from Recorder's cumulative register statistics. Retention is configurable
+from 7 to 90 Cyprus calendar days (default 30, including today's partial day).
+The first poll seeds this window through the existing 14-day request chunking.
+Subsequent polls reuse the configured rolling fetch window; restart gaps and
+increased retention trigger bounded backfill. Meter configuration dates restrict
+requests and prevent mixing channels outside their valid periods.
+
+Import and export are independently available. Missing export never becomes zero.
+Explicitly returned corrections replace existing intervals; invalid returned values
+remove those intervals. Missing rows do not erase previously received cached values.
+Older provider corrections outside the regular fetch window may remain until the
+cache is rebuilt or the window is expanded. Retention expires old samples. History
+is private to the local HA storage and is not a permanent interval archive.
+
+Half-hour timestamps retain the documented interval-end assumption. Profile graphs
+show **average kW = interval kWh × 2**, not instantaneous demand. Missing intervals
+break lines. Coverage is received intervals divided by elapsed intervals in the
+retained window; a recent installation or configuration gap can reduce it.
+
+**Overnight baseline** is the median of each complete configured night's average
+grid-import power. Only windows with every half-hour present and whose end is in
+the past contribute. This includes overnight EV charging/heating and is not a
+measurement of appliance standby load or whole-house demand. UTC stepping handles
+23/25-hour DST days; offset-free ambiguous autumn timestamps remain unresolved.
+**Highest demand** is the highest observed half-hour average, not a fuse-sizing peak.
+**Surplus profile** averages exported power by local half-hour slot and reports its
+sample count. It includes observed zeros, excludes missing samples, and is not a
+forecast or total PV generation.
+
+Tariff identifiers are read from the authenticated DSO consumption report, at most
+once per active meter per 24 hours. Only the code, source and retrieval time are
+stored; report HTML and personal report fields are discarded. Codes and prices are
+never inferred from meter model, account identity or channel names. A missing or
+changed report format leaves the code unknown (or retains the previous code with
+its original retrieval date). No tariff-price/settlement engine is included.
+
+`eac_cyprus/profile_meters` and `eac_cyprus/profile` are authenticated read-only HA
+WebSocket commands. They return only meters whose Profile coverage entity the user
+may read. Responses are served from memory; they cannot trigger DSO requests or
+retrieve another account by supplying a service-point identifier. Interval arrays
+are not stored in entity attributes or Recorder. The standalone card contains no
+account-specific identifiers or external libraries.

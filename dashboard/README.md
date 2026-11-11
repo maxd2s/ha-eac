@@ -45,3 +45,28 @@ If the data shape is unavailable it shows a waiting message; if the native
 markup changes, it displays the original card. It uses the existing Energy
 collection plus one cached Recorder request for the seven-day export average,
 with no extra DSO requests. The source file includes no account identifiers.
+
+## Account-independent insights card (0.5.0)
+
+Copy `eac-insights-card.js` to `/config/www/` and register
+`/local/eac-insights-card.js?v=0.5.0` as a JavaScript module resource. Add:
+
+```yaml
+type: custom:eac-insights-card
+```
+
+There are no required account, service-point, meter or statistic IDs. The card
+discovers the meters the signed-in HA user can read and offers a meter selector.
+An optional `entity` selects a specific **Profile coverage** entity initially.
+It displays:
+
+- Half-hour import/export history, with a full-window view and day selection.
+- Median complete-night average grid demand and highest half-hour average demand.
+- Typical grid export by local half-hour, including observed zeros and sample counts.
+- DSO-reported tariff code, retrieval date, meter model, phases and load entitlement.
+
+Configure retention (7–90 calendar days, default 30) and overnight hours
+(default 00:00–06:00 Cyprus time) in the integration's options. A wrapped window,
+such as 22:00–06:00, is supported. Refresh reads HA's cache; it does not trigger a
+new DSO request. The shared profile endpoint enforces HA entity read permissions.
+Missing channels, tariff codes and nights remain unknown; import-only meters work.

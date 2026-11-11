@@ -45,6 +45,7 @@ async def main():
         await async_load_base_functionality(hass)
         async_initialize_recorder(hass)
         client = AsyncMock()
+        client.get_tariff_code.return_value = "SYNTHETIC-5"
         client.get_user_details.return_value = UserDetails("Synthetic User", False, {})
         client.list_service_points.return_value = [
             ServicePoint("123", "Test", True, True, "S1", None, None, None, {})
@@ -107,6 +108,17 @@ async def main():
                     assert float(net.state) == .75, net
                     assert len(net.attributes["points"]) == 1
                 assert all("state_class" not in s.attributes for s in today)
+                tariff = next(s for s in sensors if "tariff_code" in s.entity_id)
+                assert tariff.state == "SYNTHETIC-5", tariff
+                from custom_components.eac_cyprus.websocket import ws_meters, ws_profile
+                from unittest.mock import MagicMock
+                connection = MagicMock()
+                connection.user.permissions.check_entity.return_value = True
+                ws_meters(hass, connection, {"id": 1})
+                available = connection.send_result.call_args.args[1]
+                assert len(available) == 1
+                ws_profile(hass, connection, {"id": 2, "entity_id": available[0]["entity_id"]})
+                assert "points" in connection.send_result.call_args.args[1]
                 # Verify the chart payload is not stored in Recorder.
                 from homeassistant.components.recorder.db_schema import StateAttributes
                 from sqlalchemy import select
@@ -165,6 +177,7 @@ async def main():
                                 "config flow",
                                 "entity setup",
                                 "provisional sensors and graph payload exclusion",
+                                "tariff discovery and permission-scoped profile API",
                                 "actual SQLite statistics write",
                                 "repeat import idempotency",
                                 "reauth and reload",
