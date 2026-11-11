@@ -19,8 +19,16 @@ HA_SMB_SHARE="${HA_SMB_SHARE:-config}"
 
 cd "$ROOT/custom_components/eac_cyprus"
 
+umask 077
 SCRIPT=$(mktemp)
-trap 'rm -f "$SCRIPT"' EXIT
+AUTH_FILE=$(mktemp)
+trap 'rm -f "$SCRIPT" "$AUTH_FILE"' EXIT
+# smbclient auth-file syntax is line based. Reject newlines before writing it.
+for value in "$HA_SMB_USER" "$HA_SMB_PASS" "$HA_SMB_WORKGROUP"; do
+  case "$value" in *$'\n'*|*$'\r'*) echo "Invalid multiline SMB credential" >&2; exit 1;; esac
+done
+printf 'username = %s\npassword = %s\ndomain = %s\n' \
+  "$HA_SMB_USER" "$HA_SMB_PASS" "$HA_SMB_WORKGROUP" > "$AUTH_FILE"
 
 {
   echo "cd custom_components"
@@ -40,8 +48,7 @@ trap 'rm -f "$SCRIPT"' EXIT
   for f in brand/*.png; do echo "put $(basename "$f")"; done
 } > "$SCRIPT"
 
-smbclient "//$HA_HOST/$HA_SMB_SHARE" -U "$HA_SMB_USER%$HA_SMB_PASS" -W "$HA_SMB_WORKGROUP" < "$SCRIPT" \
-  | grep -E '^putting|^NT_STATUS' || true
+smbclient "//$HA_HOST/$HA_SMB_SHARE" -A "$AUTH_FILE" < "$SCRIPT"
 
 echo "deployed to //$HA_HOST/$HA_SMB_SHARE/custom_components/eac_cyprus/"
 echo "now restart HA: Settings → System → Restart  (or 'ha core restart' via SSH)"

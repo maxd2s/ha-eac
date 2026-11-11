@@ -1,5 +1,7 @@
 # EAC Cyprus — Home Assistant integration
 
+This fork of [SantaFox/ha-eac](https://github.com/SantaFox/ha-eac) adds security hardening and Home Assistant 2026.10/11 compatibility. See [the security review](SECURITY_REVIEW.md) for scope, evidence, and remaining limitations. No live account validation has been performed for this revision.
+
 Home Assistant integration for the EAC (Electricity Authority of Cyprus) Distribution Web Portal at `meterreading-dso.eac.com.cy`.
 
 It pulls your electricity-meter readings into Home Assistant — the full history into the Energy Dashboard, plus live "latest known value" sensors and per-meter diagnostics. Built on the [`eac-dso-portal`](https://github.com/SantaFox/eac-dso-portal) Python client (also on [PyPI](https://pypi.org/project/eac-dso-portal/)).
@@ -29,7 +31,7 @@ So the integration splits the picture in two:
 
 The statistics are named from the meter serial, e.g. `1281890 Energy total (24h)`. They are not entities (that is inherent to delayed-data statistics), so you view them via:
 
-- **Energy Dashboard** → *Add consumption* → pick `<serial> Energy total (24h)` (and the two tariff series for a two-tariff plan, or `<serial> Energy exported` under Solar production once you have PV).
+- **Energy Dashboard** → *Add consumption* → pick `<serial> Energy total (24h)` (and the two tariff series for a two-tariff plan, or `<serial> Energy exported` under Grid → Return to grid if you export energy).
 - A **Statistics graph** card on any dashboard → pick the same series.
 - **Developer Tools → Statistics** → lists them all.
 
@@ -39,7 +41,7 @@ Regular polling only keeps a rolling window. To backfill everything the portal h
 
 **Developer Tools → Actions → `eac_cyprus.import_full_history` → Run.**
 
-It returns a per-channel summary and posts a notification when done. Idempotent — safe to re-run. You are prompted to run it once on first setup.
+It returns a per-channel summary and posts a notification after enqueueing the results. Administrator access is required. Imports use sequential 14-day windows, with one import at a time per account and a 10-minute deadline. An interrupted import reports an error; existing rows remain and rerunning is idempotent. You are prompted to run it once on first setup.
 
 ## Configuration
 
@@ -53,7 +55,7 @@ Settings → Devices & Services → the EAC tile → three-dot menu → **Config
 
 ### HACS
 
-Add this repository as a **Custom repository** (HACS → three-dot menu → Custom repositories → `https://github.com/SantaFox/ha-eac`, category *Integration*), then install "EAC Distribution Web Portal" and restart Home Assistant.
+Add this repository as a **Custom repository** (HACS → three-dot menu → Custom repositories → `https://github.com/maxd2s/ha-eac`, category *Integration*), then install "EAC Distribution Web Portal" and restart Home Assistant.
 
 ### Manual
 
@@ -77,3 +79,33 @@ Depends on the [`eac-dso-portal`](https://github.com/SantaFox/eac-dso-portal) li
 ## License
 
 MIT
+
+
+## Fork transport and lifecycle changes
+
+- Credentials go only to `https://meterreading-dso.eac.com.cy`; custom origins and redirects are refused. TLS certificate verification stays enabled.
+- Each request has a 30-second total deadline and a 2 MiB decoded response limit. A rejected token is refreshed at most once per request; concurrent requests share one login.
+- HTTP 429 creates a local cooldown (at least 60 seconds, `Retry-After` respected up to 24 hours). No busy retry loop or parallel portal requests.
+- Error responses and credentials are excluded from exception messages. Portal/account identifiers were removed from normal import logs.
+- Invalid credentials open HA's reauthentication flow. Credential changes reload the entry; polling changes update the coordinator without a full HA restart.
+- Statistics declare `mean_type` and `unit_class`. Unsorted/duplicate-hour readings are normalized; nonfinite or negative cumulative readings are rejected.
+- Offset-free timestamps are interpreted as Cyprus civil time, including DST; explicit offsets are preserved. This follows the upstream code's description and needs verification against a live portal export before relying on time-of-day totals.
+- Delayed power snapshots do not advertise live measurement statistics. Unknown channels no longer crash setup; apparent/reactive energy keeps energy units.
+
+## Tests
+
+Python 3.14, isolated environment:
+
+```sh
+python -m pip install -r requirements-test.txt
+python scripts/run_tests.py -q
+```
+
+The current HA test-helper release pins HA 2026.10.4. A separate smoke check uses the actual HA 2026.11.1 core, a disposable configuration and SQLite database, and a synthetic portal client:
+
+```sh
+python -m pip install homeassistant==2026.11.1
+python scripts/smoke_ha.py
+```
+
+The smoke check verifies config flow, entities, actual statistic storage, repeat-import idempotency, reauthentication/reload, and service cleanup. It never connects to a production Home Assistant or uses real DSO credentials. GitHub Actions runs both paths with read-only repository permissions and pinned action revisions.

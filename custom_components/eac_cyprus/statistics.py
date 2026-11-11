@@ -23,13 +23,16 @@ v1 scope (this module): cumulative kWh channels only. Interval channels
 (30-min load profile) have no cumulative reading on the API side, so the
 running sum has to be synthesised. Tracked separately.
 """
+
 from __future__ import annotations
 
 import logging
-from datetime import UTC
+import math
 
+from eac_dso_portal import Reading
 from homeassistant.components.recorder.models.statistics import (
     StatisticData,
+    StatisticMeanType,
     StatisticMetaData,
 )
 from homeassistant.components.recorder.statistics import (
@@ -37,10 +40,10 @@ from homeassistant.components.recorder.statistics import (
 )
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
-
-from eac_dso_portal import Reading
+from homeassistant.util.unit_conversion import EnergyConverter
 
 from .const import DOMAIN
+from .time import as_utc
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -68,20 +71,20 @@ def import_cumulative_history(
     instead of a transliterated address. The ``statistic_id`` stays derived
     from (service point, channel) so it is stable across renames and restarts.
     """
-    points = [r for r in readings if r.reading is not None]
+    points = [
+        r
+        for r in readings
+        if r.reading is not None and math.isfinite(r.reading) and r.reading >= 0
+    ]
     if not points:
-        _LOGGER.info(
-            "Skipping stats import for sp=%s mc=%s: %d readings, none cumulative",
-            sp_id,
-            channel_id,
-            len(readings),
-        )
+        _LOGGER.debug("No valid cumulative readings in %d observations", len(readings))
         return
 
     statistic_id = external_statistic_id(sp_id, channel_id)
 
     metadata: StatisticMetaData = {
-        "has_mean": False,
+        "mean_type": StatisticMeanType.NONE,
+        "unit_class": EnergyConverter.UNIT_CLASS,
         "has_sum": True,
         "name": display_name,
         "source": DOMAIN,
@@ -89,34 +92,16 @@ def import_cumulative_history(
         "unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR,
     }
 
-    stats: list[StatisticData] = []
-    for r in points:
-        # The portal's `dt` is naive ISO; daily readings sit at 00:00 Cyprus
-        # local time. Treat as UTC for now: a few hours of drift on a daily
-        # lifetime counter is invisible in Energy Dashboard. Proper TZ
-        # handling is a follow-up when we start importing 30-minute data.
-        start = r.dt.replace(minute=0, second=0, microsecond=0)
-        if start.tzinfo is None:
-            start = start.replace(tzinfo=UTC)
-        # `sum` is the running lifetime total at the end of the hour, which
-        # is exactly what the meter's cumulative reading already is.
-        stats.append({"start": start, "sum": r.reading})
+    # At most one row per UTC hour. Sort first so the last observation wins.
+    by_hour: dict = {}
+    for r in sorted(points, key=lambda reading: as_utc(reading.dt)):
+        start = as_utc(r.dt).replace(minute=0, second=0, microsecond=0)
+        by_hour[start] = {"start": start, "sum": r.reading}
+    stats: list[StatisticData] = list(by_hour.values())
 
     try:
         async_add_external_statistics(hass, metadata, stats)
     except Exception:  # noqa: BLE001 - recorder exceptions are interesting
-        _LOGGER.exception(
-            "async_add_external_statistics raised for %s (rows=%d, first=%s, last=%s)",
-            statistic_id,
-            len(stats),
-            stats[0]["start"].isoformat(),
-            stats[-1]["start"].isoformat(),
-        )
+        raise RuntimeError("Could not enqueue EAC statistics") from None
     else:
-        _LOGGER.info(
-            "Imported %d statistics rows for %s (range %s to %s)",
-            len(stats),
-            statistic_id,
-            stats[0]["start"].isoformat(),
-            stats[-1]["start"].isoformat(),
-        )
+        _LOGGER.debug("Queued %d statistic rows", len(stats))

@@ -3,6 +3,7 @@
 The portal publishes with a 2-3 day lag, so "no fresh reading" is only a real
 problem once it exceeds a configurable threshold (``stale_threshold_days``).
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -64,7 +65,7 @@ class EacStaleSensor(_MeterEntity, BinarySensorEntity):
         super().__init__(coordinator, sp_id, meter_key)
         self._entry = entry
         self._attr_unique_id = f"{meter_key}_data_stale"
-        self._attr_device_info = meter_device_info(self._meter)
+        self._attr_device_info = meter_device_info(self._meter, coordinator)
 
     @property
     def is_on(self) -> bool | None:

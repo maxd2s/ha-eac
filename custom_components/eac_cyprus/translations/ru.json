@@ -6,8 +6,14 @@
         "description": "Введите логин и пароль от meterreading-dso.eac.com.cy.",
         "data": {
           "email": "Email",
-          "password": "Пароль",
-          "base_url": "URL портала"
+          "password": "Пароль"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Renew EAC login",
+        "description": "Enter the current password for this EAC account.",
+        "data": {
+          "password": "Password"
         }
       }
     },
@@ -17,7 +23,9 @@
       "unknown": "Непредвиденная ошибка — посмотрите логи Home Assistant."
     },
     "abort": {
-      "already_configured": "Этот аккаунт уже добавлен."
+      "already_configured": "Этот аккаунт уже добавлен.",
+      "reauth_successful": "Credentials updated.",
+      "unsupported_url": "Only the official HTTPS EAC portal is supported."
     }
   },
   "options": {
@@ -31,6 +39,9 @@
           "stale_threshold_days": "Порог устаревания данных (дней без свежего показания до срабатывания диагностики)"
         }
       }
+    },
+    "abort": {
+      "invalid_options": "Choose a listed polling interval, 1–60 history days and 1–30 stale days."
     }
   }
 }

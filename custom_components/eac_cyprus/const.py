@@ -1,10 +1,12 @@
 """Constants for the EAC Cyprus integration."""
+
 from __future__ import annotations
 
 DOMAIN = "eac_cyprus"
 
 CONF_EMAIL = "email"
-CONF_PASSWORD = "password"
+# This is a config field name, not a credential.
+CONF_PASSWORD = "password"  # nosec B105
 CONF_BASE_URL = "base_url"
 
 # Runtime-tunable options (config entry .options dict).

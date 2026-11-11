@@ -6,26 +6,31 @@ a retired meter keeps its history and final reading instead of vanishing. Every
 refresh fetches fresh readings for the *active* meter; retired meters never
 change, so their final snapshot is fetched once and cached.
 """
+
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-
+import aiohttp
 from eac_dso_portal import (
     EacApiError,
     EacAuthError,
-    EacClient,
     MeasurementChannel,
     MeterConfig,
     Reading,
     ServicePoint,
     UserDetails,
 )
+from eac_dso_portal.exceptions import EacRateLimitError
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+
+from .client import EacClient
 from .const import (
     CONF_HISTORY_DAYS,
     CONF_SCAN_INTERVAL_MINUTES,
@@ -35,15 +40,9 @@ from .const import (
     channel_label,
 )
 from .statistics import import_cumulative_history
+from .time import as_utc as _as_utc
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def _as_utc(dt: datetime | None) -> datetime | None:
-    """Normalise a (possibly naive) portal datetime to tz-aware UTC."""
-    if dt is None:
-        return None
-    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
 def meter_key(sp_id: str, meter: MeterConfig) -> str:
@@ -57,6 +56,7 @@ def meter_key(sp_id: str, meter: MeterConfig) -> str:
 @dataclass(frozen=True, slots=True)
 class ChannelState:
     """Current state of a single measurement channel."""
+
     channel: MeasurementChannel
     latest: Reading | None  # most recent reading we have (cumulative or interval)
 
@@ -64,6 +64,7 @@ class ChannelState:
 @dataclass(frozen=True, slots=True)
 class MeterState:
     """One meter on a service point, active or retired, with its channels."""
+
     service_point: ServicePoint
     meter: MeterConfig
     active: bool  # removal_date is None
@@ -83,6 +84,7 @@ class MeterState:
 @dataclass(frozen=True, slots=True)
 class ServicePointState:
     """Per-service-point snapshot built every refresh."""
+
     service_point: ServicePoint
     meters: dict[str, MeterState]  # keyed by meter_key()
 
@@ -90,6 +92,7 @@ class ServicePointState:
 @dataclass(frozen=True, slots=True)
 class EacData:
     """What the coordinator hands to entities."""
+
     user: UserDetails
     points: dict[str, ServicePointState]  # keyed by service-point id
     last_success_time: datetime  # tz-aware UTC; surfaced via a diagnostic sensor
@@ -98,13 +101,18 @@ class EacData:
 class EacCoordinator(DataUpdateCoordinator[EacData]):
     """Fetch service points, meters, and per-channel readings on a schedule."""
 
-    def __init__(self, hass: HomeAssistant, client: EacClient, entry: ConfigEntry) -> None:
+    def __init__(
+        self, hass: HomeAssistant, client: EacClient, entry: ConfigEntry
+    ) -> None:
         super().__init__(
             hass,
             _LOGGER,
-            name=f"{DOMAIN} ({entry.title})",
+            name=DOMAIN,
+            config_entry=entry,
             update_interval=_interval_from_options(entry),
         )
+        self.operation_lock = asyncio.Lock()
+        self.history_import_running = False
         self._client = client
         self._entry = entry
         # Retired meters never change; cache their final snapshot by meter_key.
@@ -120,13 +128,30 @@ class EacCoordinator(DataUpdateCoordinator[EacData]):
         self.update_interval = _interval_from_options(self._entry)
 
     async def _async_update_data(self) -> EacData:
+        async with self.operation_lock:
+            try:
+                async with asyncio.timeout(180):
+                    return await self._fetch_data()
+            except EacAuthError:
+                raise ConfigEntryAuthFailed("EAC login needs to be renewed") from None
+            except (
+                EacApiError,
+                aiohttp.ClientError,
+                TimeoutError,
+                ValueError,
+                TypeError,
+                KeyError,
+            ):
+                raise UpdateFailed(
+                    "EAC portal update failed; retrying on the next refresh"
+                ) from None
+
+    async def _fetch_data(self) -> EacData:
         try:
             user = await self._client.get_user_details()
             sps = await self._client.list_service_points()
-        except EacAuthError as err:
-            raise UpdateFailed(f"Authentication failed: {err}") from err
-        except EacApiError as err:
-            raise UpdateFailed(f"API error: {err}") from err
+        except (EacAuthError, EacApiError):
+            raise
 
         received_at = datetime.now(UTC)
         history_days = self._entry.options.get(CONF_HISTORY_DAYS, DEFAULT_HISTORY_DAYS)
@@ -137,8 +162,12 @@ class EacCoordinator(DataUpdateCoordinator[EacData]):
             if sp.active and sp.device_exists:
                 try:
                     configs = await self._client.get_meter_configs(sp.id)
+                except EacRateLimitError:
+                    raise
                 except EacApiError as err:
-                    _LOGGER.warning("Meter config fetch failed for %s: %s", sp.id, err)
+                    _LOGGER.warning(
+                        "Meter configuration fetch failed (HTTP %s)", err.status
+                    )
                     configs = []
 
                 for cfg in configs:
@@ -152,9 +181,13 @@ class EacCoordinator(DataUpdateCoordinator[EacData]):
 
             points[sp.id] = ServicePointState(service_point=sp, meters=meters)
 
-        return EacData(
-            user=user, points=points, last_success_time=datetime.now(UTC)
-        )
+        current_keys = {key for point in points.values() for key in point.meters}
+        self._retired_cache = {
+            key: value
+            for key, value in self._retired_cache.items()
+            if key in current_keys
+        }
+        return EacData(user=user, points=points, last_success_time=datetime.now(UTC))
 
     async def _retired_meter(
         self, sp: ServicePoint, cfg: MeterConfig, received_at: datetime
@@ -164,9 +197,10 @@ class EacCoordinator(DataUpdateCoordinator[EacData]):
         if key not in self._retired_cache:
             end = _as_utc(cfg.removal_date) or received_at
             start = end - timedelta(days=14)
-            self._retired_cache[key] = await self._fetch_meter(
-                sp, cfg, start, end, received_at
-            )
+            snapshot = await self._fetch_meter(sp, cfg, start, end, received_at)
+            if snapshot.channels:
+                self._retired_cache[key] = snapshot
+            return snapshot
         return self._retired_cache[key]
 
     async def _fetch_meter(
@@ -185,12 +219,12 @@ class EacCoordinator(DataUpdateCoordinator[EacData]):
                 per_channel = await self._client.get_readings(
                     sp.id, start, end, mc_id=ch.id
                 )
+            except EacRateLimitError:
+                raise
             except EacApiError as err:
-                _LOGGER.debug("No readings for sp=%s mc=%s: %s", sp.id, ch.id, err)
+                _LOGGER.debug("Channel readings unavailable (HTTP %s)", err.status)
                 continue
-            matching = next(
-                (cr for cr in per_channel if cr.channel_id == ch.id), None
-            )
+            matching = next((cr for cr in per_channel if cr.channel_id == ch.id), None)
             if matching is None or not matching.readings:
                 continue
             latest = max(matching.readings, key=lambda r: r.dt)

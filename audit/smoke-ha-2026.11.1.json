@@ -1,0 +1,12 @@
+{
+  "homeassistant": "2026.11.1",
+  "result": "passed",
+  "checks": [
+    "config flow",
+    "entity setup",
+    "actual SQLite statistics write",
+    "repeat import idempotency",
+    "reauth and reload",
+    "unload and service cleanup"
+  ]
+}

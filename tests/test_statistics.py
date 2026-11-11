@@ -1,12 +1,15 @@
 """Tests for the long-term-statistics backfill module."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
 from unittest.mock import patch
 
 from eac_dso_portal import Reading
+from homeassistant.components.recorder.models.statistics import StatisticMeanType
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
+from homeassistant.util.unit_conversion import EnergyConverter
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.eac_cyprus.const import CONF_EMAIL, CONF_PASSWORD, DOMAIN
@@ -80,7 +83,8 @@ async def test_imports_cumulative_kwh_with_correct_metadata(
     assert metadata["statistic_id"] == "eac_cyprus:863224497404_mc-total"
     assert metadata["source"] == DOMAIN
     assert metadata["has_sum"] is True
-    assert metadata["has_mean"] is False
+    assert metadata["mean_type"] == StatisticMeanType.NONE
+    assert metadata["unit_class"] == EnergyConverter.UNIT_CLASS
     assert metadata["unit_of_measurement"] == UnitOfEnergy.KILO_WATT_HOUR
     # Display name is passed through verbatim (meter serial + channel label).
     assert metadata["name"] == "1281890 Energy total (24h)"
@@ -110,5 +114,5 @@ async def test_coordinator_pushes_stats_for_cumulative_channel_only(
     called_channels = [
         c.kwargs.get("channel_id") or c.args[2] for c in mock_import.call_args_list
     ]
-    assert "mc-total-24h" in called_channels
-    assert "mc-30min-imp" not in called_channels
+    assert "100001" in called_channels
+    assert "100002" not in called_channels

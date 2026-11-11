@@ -10,9 +10,11 @@ service point itself acting as the parent device. Each meter exposes:
 The canonical history lives in external statistics (see statistics.py); the
 entities here are the "what does HA know now" half of the picture.
 """
+
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime
 from typing import Any
 
@@ -20,14 +22,11 @@ from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
-    SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
-    UnitOfApparentPower,
     UnitOfEnergy,
     UnitOfPower,
-    UnitOfReactivePower,
     UnitOfTime,
 )
 from homeassistant.core import HomeAssistant, callback
@@ -46,7 +45,9 @@ _LOGGER = logging.getLogger(__name__)
 _INTERVAL_TO_POWER_FACTOR: dict[str, float] = {"30MIN": 2.0}
 
 
-def _value_description(uom: str, ch_type: str, interval: bool) -> SensorEntityDescription:
+def _value_description(
+    uom: str, ch_type: str, interval: bool
+) -> SensorEntityDescription:
     """Describe the 'last value' glance sensor for one channel.
 
     Cumulative kWh channels are a plain latest-value display with NO state_class
@@ -57,13 +58,12 @@ def _value_description(uom: str, ch_type: str, interval: bool) -> SensorEntityDe
     uom_upper = (uom or "").upper()
     key = f"{ch_type}".lower().replace("-", "_") or "channel"
 
-    if uom_upper == "KWH" and interval:
+    if uom_upper == "KWH" and interval and "30MIN" in ch_type:
         return SensorEntityDescription(
             key=key,
             name=channel_label(ch_type),
             native_unit_of_measurement=UnitOfPower.KILO_WATT,
             device_class=SensorDeviceClass.POWER,
-            state_class=SensorStateClass.MEASUREMENT,
             suggested_display_precision=2,
         )
     if uom_upper == "KWH":
@@ -78,19 +78,19 @@ def _value_description(uom: str, ch_type: str, interval: bool) -> SensorEntityDe
         return SensorEntityDescription(
             key=key,
             name=channel_label(ch_type),
-            native_unit_of_measurement=UnitOfApparentPower.VOLT_AMPERE,
+            native_unit_of_measurement="kVAh",
             entity_registry_enabled_default=False,
         )
     if uom_upper in ("KVARH", "KVRH"):
         return SensorEntityDescription(
             key=key,
             name=channel_label(ch_type),
-            native_unit_of_measurement=UnitOfReactivePower.VOLT_AMPERE_REACTIVE,
+            native_unit_of_measurement="kvarh",
             entity_registry_enabled_default=False,
         )
     return SensorEntityDescription(
         key=key,
-        name=_label(ch_type),
+        name=channel_label(ch_type),
         native_unit_of_measurement=uom,
         entity_registry_enabled_default=False,
     )
@@ -108,8 +108,12 @@ def sp_device_info(sp: ServicePoint) -> DeviceInfo:
     )
 
 
-def meter_device_info(ms: MeterState) -> DeviceInfo:
+def meter_device_info(ms: MeterState, coordinator: EacCoordinator) -> DeviceInfo:
     """Child device: one physical meter, named by its serial, under the SP."""
+    parent = dr.async_get(coordinator.hass).async_get_or_create(
+        config_entry_id=coordinator.config_entry.entry_id,
+        **sp_device_info(ms.service_point),
+    )
     m = ms.meter
     name = m.serial_number or ms.key
     if m.manufacturer:
@@ -120,7 +124,7 @@ def meter_device_info(ms: MeterState) -> DeviceInfo:
         manufacturer=m.manufacturer or MANUFACTURER,
         model=m.model,
         serial_number=m.serial_number,
-        via_device=(DOMAIN, ms.service_point.id),
+        via_device_id=parent.id,
     )
 
 
@@ -151,13 +155,21 @@ async def async_setup_entry(
                     if key in known_channels:
                         continue
                     known_channels.add(key)
-                    new.append(EacChannelSensor(coordinator, sp.id, ms.key, ch_state.channel.id))
+                    new.append(
+                        EacChannelSensor(
+                            coordinator, sp.id, ms.key, ch_state.channel.id
+                        )
+                    )
                 # Per-meter diagnostics, only for the active meter.
                 if ms.active and ms.key not in known_meters:
                     known_meters.add(ms.key)
                     new.extend(
                         cls(coordinator, sp.id, ms.key)
-                        for cls in (EacMeasuredAtSensor, EacReceivedAtSensor, EacLagSensor)
+                        for cls in (
+                            EacMeasuredAtSensor,
+                            EacReceivedAtSensor,
+                            EacLagSensor,
+                        )
                     )
         if new:
             async_add_entities(new)
@@ -196,7 +208,7 @@ class EacChannelSensor(_MeterEntity, SensorEntity):
         ch = ms.channels[channel_id].channel
         self.entity_description = _value_description(ch.uom, ch.type, ch.interval)
         self._attr_unique_id = f"{meter_key}_{channel_id}"
-        self._attr_device_info = meter_device_info(ms)
+        self._attr_device_info = meter_device_info(ms, coordinator)
 
     @property
     def _ch(self):
@@ -215,8 +227,15 @@ class EacChannelSensor(_MeterEntity, SensorEntity):
             return None
         latest = ch.latest
         if latest.reading is not None:
-            return latest.reading
-        factor = _INTERVAL_TO_POWER_FACTOR.get(ch.channel.tou)
+            return latest.reading if math.isfinite(latest.reading) else None
+        if not math.isfinite(latest.value):
+            return None
+        factor = (
+            _INTERVAL_TO_POWER_FACTOR.get(ch.channel.tou)
+            if self.entity_description.native_unit_of_measurement
+            == UnitOfPower.KILO_WATT
+            else None
+        )
         return latest.value * factor if factor is not None else latest.value
 
     @property
@@ -246,7 +265,7 @@ class EacMeasuredAtSensor(_MeterEntity, SensorEntity):
     def __init__(self, coordinator: EacCoordinator, sp_id: str, meter_key: str) -> None:
         super().__init__(coordinator, sp_id, meter_key)
         self._attr_unique_id = f"{meter_key}_measured_at"
-        self._attr_device_info = meter_device_info(self._meter)
+        self._attr_device_info = meter_device_info(self._meter, coordinator)
 
     @property
     def native_value(self) -> datetime | None:
@@ -264,7 +283,7 @@ class EacReceivedAtSensor(_MeterEntity, SensorEntity):
     def __init__(self, coordinator: EacCoordinator, sp_id: str, meter_key: str) -> None:
         super().__init__(coordinator, sp_id, meter_key)
         self._attr_unique_id = f"{meter_key}_received_at"
-        self._attr_device_info = meter_device_info(self._meter)
+        self._attr_device_info = meter_device_info(self._meter, coordinator)
 
     @property
     def native_value(self) -> datetime | None:
@@ -284,7 +303,7 @@ class EacLagSensor(_MeterEntity, SensorEntity):
     def __init__(self, coordinator: EacCoordinator, sp_id: str, meter_key: str) -> None:
         super().__init__(coordinator, sp_id, meter_key)
         self._attr_unique_id = f"{meter_key}_data_lag"
-        self._attr_device_info = meter_device_info(self._meter)
+        self._attr_device_info = meter_device_info(self._meter, coordinator)
 
     @property
     def native_value(self) -> float | None:

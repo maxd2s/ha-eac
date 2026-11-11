@@ -1,4 +1,5 @@
 """Tests for the one-time full-history import."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -18,15 +19,15 @@ async def test_import_full_history_imports_cumulative_channels(
     ) as mock_import:
         results = await async_import_full_history(hass, mock_client)
 
-    # One cumulative kWh channel (mc-total-24h); the 30-min interval channel and
+    # One cumulative kWh channel (100001); the 30-min interval channel and
     # the inactive service point are skipped.
     assert len(results) == 1
     assert results[0]["channel"] == "S-KWH-24H"
     assert results[0]["meter"] == "NEW123"
-    mock_import.assert_called_once()
+    assert mock_import.call_count == 1
     _hass, sp_id, ch_id, display_name, _readings = mock_import.call_args.args
     assert sp_id == "111111111111"
-    assert ch_id == "mc-total-24h"
+    assert ch_id == "100001"
     # Named from the meter serial, not the transliterated address.
     assert display_name.startswith("NEW123 ")
 
@@ -43,10 +44,10 @@ async def test_import_full_history_spans_install_window(
     calls = [
         c
         for c in mock_client.get_readings.call_args_list
-        if c.kwargs.get("mc_id") == "mc-total-24h"
+        if c.kwargs.get("mc_id") == "100001"
     ]
     assert calls
     # fake_active_meter install_date is 2026-02-02; start should be that date.
-    start = calls[-1].args[1]
+    start = calls[0].args[1].astimezone(__import__("zoneinfo").ZoneInfo("Asia/Nicosia"))
     assert isinstance(start, datetime)
     assert (start.year, start.month, start.day) == (2026, 2, 2)

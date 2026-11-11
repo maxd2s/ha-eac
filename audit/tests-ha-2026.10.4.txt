@@ -1,0 +1,3 @@
+Command: python scripts/run_tests.py -q --tb=short --disable-warnings
+Environment: Python 3.14 / Home Assistant 2026.10.4 / pytest-homeassistant-custom-component 0.13.375
+62 passed in 2.01s

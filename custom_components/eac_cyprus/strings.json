@@ -6,8 +6,14 @@
         "description": "Sign in with the credentials you use at meterreading-dso.eac.com.cy.",
         "data": {
           "email": "Email",
-          "password": "Password",
-          "base_url": "Portal URL"
+          "password": "Password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Renew EAC login",
+        "description": "Enter the current password for this EAC account.",
+        "data": {
+          "password": "Password"
         }
       }
     },
@@ -17,20 +23,25 @@
       "unknown": "Unexpected error — check the Home Assistant logs."
     },
     "abort": {
-      "already_configured": "This account is already configured."
+      "already_configured": "This account is already configured.",
+      "reauth_successful": "Credentials updated.",
+      "unsupported_url": "Only the official HTTPS EAC portal is supported."
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "EAC settings",
-        "description": "Heads-up: the portal updates daily and 30-min profile data lags by hours. Polling more often than 6 hours does not give a smoother Energy Dashboard graph — for that you need statistics import (planned).",
+        "description": "The portal normally publishes delayed data. Six-hour polling is sufficient. Use the import action for older history.",
         "data": {
           "scan_interval_minutes": "Polling interval",
           "history_days": "History window (days fetched on each refresh)",
           "stale_threshold_days": "Data-stale threshold (days without a fresh reading before the diagnostic flags)"
         }
       }
+    },
+    "abort": {
+      "invalid_options": "Choose a listed polling interval, 1–60 history days and 1–30 stale days."
     }
   }
 }

@@ -1,13 +1,19 @@
 {
   "domain": "eac_cyprus",
   "name": "EAC Distribution Web Portal",
-  "codeowners": ["@SantaFox"],
+  "codeowners": [
+    "@SantaFox"
+  ],
   "config_flow": true,
-  "dependencies": ["recorder"],
-  "documentation": "https://github.com/SantaFox/ha-eac",
+  "dependencies": [
+    "recorder"
+  ],
+  "documentation": "https://github.com/maxd2s/ha-eac",
   "integration_type": "hub",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/SantaFox/ha-eac/issues",
-  "requirements": ["eac-dso-portal==0.2.1"],
-  "version": "0.3.0"
+  "issue_tracker": "https://github.com/maxd2s/ha-eac/issues",
+  "requirements": [
+    "eac-dso-portal==0.2.1"
+  ],
+  "version": "0.4.0"
 }

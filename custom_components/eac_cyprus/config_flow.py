@@ -1,4 +1,5 @@
 """Config flow for the EAC Cyprus integration."""
+
 from __future__ import annotations
 
 import logging
@@ -6,7 +7,7 @@ from typing import Any
 
 import aiohttp
 import voluptuous as vol
-
+from eac_dso_portal import EacApiError, EacAuthError
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
@@ -17,7 +18,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from eac_dso_portal import EacApiError, EacAuthError, EacClient
+from .client import EacClient, validate_base_url
 from .const import (
     CONF_BASE_URL,
     CONF_EMAIL,
@@ -38,8 +39,9 @@ _LOGGER = logging.getLogger(__name__)
 STEP_USER_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_EMAIL): str,
-        vol.Required(CONF_PASSWORD): str,
-        vol.Optional(CONF_BASE_URL, default=DEFAULT_BASE_URL): str,
+        vol.Required(CONF_PASSWORD): selector.TextSelector(
+            selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+        ),
     }
 )
 
@@ -70,12 +72,17 @@ class EacConfigFlow(ConfigFlow, domain=DOMAIN):
             await self.async_set_unique_id(email)
             self._abort_if_unique_id_configured()
 
+            try:
+                validate_base_url(user_input.get(CONF_BASE_URL, DEFAULT_BASE_URL))
+            except ValueError:
+                return self.async_abort(reason="unsupported_url")
+
             session = async_get_clientsession(self.hass)
             client = EacClient(
                 email,
                 user_input[CONF_PASSWORD],
                 session=session,
-                base_url=user_input.get(CONF_BASE_URL, DEFAULT_BASE_URL),
+                base_url=DEFAULT_BASE_URL,
             )
             try:
                 await client.login()
@@ -85,7 +92,9 @@ class EacConfigFlow(ConfigFlow, domain=DOMAIN):
             except (EacApiError, aiohttp.ClientError, TimeoutError):
                 errors["base"] = "cannot_connect"
             except Exception:  # noqa: BLE001 - last-resort safety net
-                _LOGGER.exception("Unexpected error during EAC login")
+                _LOGGER.error(
+                    "Unexpected error during EAC login; response details withheld"
+                )
                 errors["base"] = "unknown"
             else:
                 title = user.name or email
@@ -94,12 +103,62 @@ class EacConfigFlow(ConfigFlow, domain=DOMAIN):
                     data={
                         CONF_EMAIL: email,
                         CONF_PASSWORD: user_input[CONF_PASSWORD],
-                        CONF_BASE_URL: user_input.get(CONF_BASE_URL, DEFAULT_BASE_URL),
+                        CONF_BASE_URL: DEFAULT_BASE_URL,
                     },
                 )
 
         return self.async_show_form(
             step_id="user", data_schema=STEP_USER_SCHEMA, errors=errors
+        )
+
+    async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
+        """Repair credentials without deleting meters or historical statistics."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(self, user_input=None) -> ConfigFlowResult:
+        entry = self._get_reauth_entry()
+        errors = {}
+        if user_input is not None:
+            client = EacClient(
+                entry.data[CONF_EMAIL],
+                user_input[CONF_PASSWORD],
+                session=async_get_clientsession(self.hass),
+            )
+            try:
+                await client.login()
+                await client.get_user_details()
+            except EacAuthError:
+                errors["base"] = "invalid_auth"
+            except (EacApiError, aiohttp.ClientError, TimeoutError):
+                errors["base"] = "cannot_connect"
+            except Exception:
+                errors["base"] = "unknown"
+            else:
+                updates = {
+                    CONF_PASSWORD: user_input[CONF_PASSWORD],
+                    CONF_BASE_URL: DEFAULT_BASE_URL,
+                }
+                if entry.update_listeners:
+                    unchanged = all(
+                        entry.data.get(key) == value for key, value in updates.items()
+                    )
+                    result = self.async_update_and_abort(entry, data_updates=updates)
+                    if unchanged:
+                        self.hass.config_entries.async_schedule_reload(entry.entry_id)
+                    return result
+                return self.async_update_reload_and_abort(entry, data_updates=updates)
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            errors=errors,
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_PASSWORD): selector.TextSelector(
+                        selector.TextSelectorConfig(
+                            type=selector.TextSelectorType.PASSWORD
+                        )
+                    )
+                }
+            ),
         )
 
 
@@ -121,6 +180,28 @@ class EacOptionsFlow(OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         if user_input is not None:
+            try:
+                interval = int(user_input[CONF_SCAN_INTERVAL_MINUTES])
+                history = int(user_input[CONF_HISTORY_DAYS])
+                stale = int(
+                    user_input.get(
+                        CONF_STALE_THRESHOLD_DAYS, DEFAULT_STALE_THRESHOLD_DAYS
+                    )
+                )
+                valid = (
+                    interval in SCAN_INTERVAL_CHOICES
+                    and 1 <= history <= 60
+                    and 1 <= stale <= 30
+                )
+            except (ValueError, TypeError, KeyError):
+                valid = False
+            if not valid:
+                return self.async_abort(reason="invalid_options")
+            user_input = {
+                CONF_SCAN_INTERVAL_MINUTES: interval,
+                CONF_HISTORY_DAYS: history,
+                CONF_STALE_THRESHOLD_DAYS: stale,
+            }
             # The select selector hands back strings; coerce to int once.
             user_input[CONF_SCAN_INTERVAL_MINUTES] = int(
                 user_input[CONF_SCAN_INTERVAL_MINUTES]
