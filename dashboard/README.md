@@ -22,9 +22,10 @@ No account, meter, tariff or statistic IDs are required. The integration returns
 history identifiers for the readable meter selected in the page. An optional
 `entity` can select the initial Profile coverage entity.
 
-**Using the page:** Today shows provisional intervals; 7 days shows the last
+**Using the page:** Today shows provisional intervals; Yesterday selects the preceding Cyprus
+calendar day; 7 days shows the last
 seven completed calendar days; Month and Year show daily/monthly register
-changes; Day selects one calendar date. The period selector controls both the
+changes; Custom opens a picker for one calendar date. The period selector controls both the
 totals and the main chart. Use the chart menu for half-hour power, and Line/Bars
 for register energy. Patterns and demand insights below the main chart use the
 retained window, explicitly independent of the selected period. Expand the
