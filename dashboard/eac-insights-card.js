@@ -33,8 +33,10 @@ class EacInsightsCard extends HTMLElement {
     if(!d){this.shadowRoot.innerHTML=`<style>${css}</style><ha-card><h2>Grid energy insights</h2><select aria-label="Meter">${choices}</select><p>${esc(this._error||'Loading meter history…')}</p></ha-card>`;this._events();return;}
     const all=(d.points||[]).filter(p=>Array.isArray(p)&&Number.isFinite(p[0]));
     const points=all.filter(p=>!this._day||dateKey(p[0]-1)===this._day);
-    const days=[...new Set(all.map(p=>dateKey(p[0]-1)))];
-    const dates=days.map(day=>`<option value="${day}" ${this._day===day?'selected':''}>${day}</option>`).join('');
+    const observedDays=new Set(all.map(p=>dateKey(p[0]-1)));
+    const calendarStart=Date.parse(dateKey(Date.parse(d.window_start))+'T12:00:00Z');
+    const days=Array.from({length:Math.min(90,Math.max(0,d.window_days))},(_,i)=>new Date(calendarStart+i*86400000).toISOString().slice(0,10));
+    const dates=days.map(day=>`<option value="${day}" ${this._day===day?'selected':''}>${day}${observedDays.has(day)?'':' — no readings'}</option>`).join('');
     let history='<div class="empty">No half-hour readings for this selection.</div>';
     if(points.length){
       const from=this._day?points[0][0]-1800000:Date.parse(d.window_start);
@@ -60,7 +62,7 @@ class EacInsightsCard extends HTMLElement {
     <div class="controls"><select aria-label="Meter">${choices}</select><button id="refresh" aria-label="Refresh cached data">Refresh</button></div>
     <div class="kpis"><div class="kpi"><div class="label">Overnight baseline</div><strong>${fmt(d.overnight_baseline_kw)}</strong><small>kW · ${d.complete_nights} complete nights<br>${hour(d.night_start_hour)}–${hour(d.night_end_hour)}</small></div><div class="kpi"><div class="label">Highest demand</div><strong>${fmt(d.peak_import_kw)}</strong><small>kW · 30-min average<br>${esc(when(d.peak_import_at))}</small></div><div class="kpi"><div class="label">Tariff code</div><strong>${esc(tariff)}</strong><small>Reported by DSO<br>Prices not inferred</small></div></div>
     <h3>Import vs export</h3><div class="controls"><select id="day" aria-label="History date"><option value="">Full ${d.window_days}-day window</option>${dates}</select></div>${history}<div class="legend"><span class="blue">● Grid import</span><span class="gold">● Grid export</span></div>
-    <p>Coverage: import ${fmt(d.import_coverage_percent,1)}% · export ${fmt(d.export_coverage_percent,1)}%. Missing intervals break the lines; they are not zero.</p>
+    <p>Full ${d.window_days}-day coverage: import ${fmt(d.import_coverage_percent,1)}% · export ${fmt(d.export_coverage_percent,1)}%. Missing intervals break the lines; they are not zero.</p>
     <h3>Usual surplus-solar hours</h3>${surplus}<p>Average grid export by half-hour of day across all ${d.window_days} retained calendar days. Received zeros are included; missing samples are excluded. This is historical surplus, not a forecast.</p>
     <div class="details">${esc(d.model||'Meter model unavailable')} · ${esc(d.phases||'—')} phases · entitlement ${esc(d.load_entitlement||'—')} ${esc(d.load_entitlement_unit||'')}<br>Tariff source: ${esc(d.tariff?.source||'Not available')} · checked ${esc(when(d.tariff?.retrieved_at))}<br>Baseline = median of complete nights’ average grid demand. It includes any overnight charging or heating. Neither chart measures total solar generation or whole-house consumption.<br>History length and overnight hours are configurable in the integration options. Reports refresh daily; readings follow your configured polling schedule.</div></ha-card>`;
     this._events();
