@@ -1,3 +1,54 @@
+# Unified Solar & grid page (0.5.1)
+
+This is the recommended single-page dashboard. It combines balances, daily and
+monthly charts, half-hour power, surplus-export patterns, demand insights,
+tariff codes and meter details. The earlier cards remain supported below.
+
+1. Update the integration to 0.5.1 or later and restart Home Assistant.
+2. Copy `eac-energy-dashboard.js` to `/config/www/`.
+3. Register `/local/eac-energy-dashboard.js?v=0.5.1` as a JavaScript module resource.
+4. Create a **Panel** view with one card:
+
+```yaml
+title: Solar & grid
+path: overview
+icon: mdi:solar-power
+type: panel
+cards:
+  - type: custom:eac-energy-dashboard
+```
+
+No account, meter, tariff or statistic IDs are required. The integration returns
+history identifiers for the readable meter selected in the page. An optional
+`entity` can select the initial Profile coverage entity.
+
+**Using the page:** Today shows provisional intervals; 7 days shows the last
+seven completed calendar days; Month and Year show daily/monthly register
+changes; Day selects one calendar date. The period selector controls both the
+totals and the main chart. Use the chart menu for half-hour power, and Line/Bars
+for register energy. Patterns and demand insights below the main chart use the
+retained window, explicitly independent of the selected period. Expand the
+bottom section for meter details and calculation notes.
+
+**Data semantics:** Today is never added to historical register totals. Net
+register totals use the matched register series, not unmatched directional
+sums. Today's net uses paired intervals; independent import/export totals may
+cover different intervals. Missing values show dashes and break chart lines.
+The seven-day export average requires all seven daily changes; gaps in upstream
+registers can accumulate on a later date. Export is not total solar generation.
+
+**Performance/access:** No third-party libraries or external requests. The page
+reads the permission-scoped profile API and HA Recorder, with up to 12 cached
+statistic queries retained for five minutes. Refresh reads HA's cache, not DSO.
+Changing the selected meter clears the previous meter's frontend cache. Late
+responses cannot overwrite a newer selection. Recorder access follows HA's
+standard authorization policy; the card does not add a new statistics endpoint.
+
+Keep a copy of your existing dashboard YAML before replacing its views. Existing
+Energy preferences and recorded statistics do not need to change.
+
+---
+
 # Today so far card
 
 1. Install integration 0.4.3 or later and reload it. Both half-hour import and

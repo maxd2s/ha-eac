@@ -7,6 +7,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN
+from .statistics import grid_statistic_id
 
 
 def _readable_meters(hass, connection):
@@ -52,6 +53,12 @@ def ws_profile(hass, connection, msg):
             msg["id"],
             {
                 **(meter.insights or {}),
+                "statistic_ids": {
+                    direction: grid_statistic_id(
+                        meter.service_point.id, meter.serial, direction
+                    )
+                    for direction in ("import", "export", "net")
+                },
                 "tariff": meter.tariff,
                 "phases": meter.service_point.phases,
                 "load_entitlement": meter.service_point.load_entitlement,

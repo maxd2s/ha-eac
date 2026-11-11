@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1
+
+- Add a responsive, dependency-free Solar & grid dashboard combining balances, period charts, surplus-export patterns, demand, tariff and meter details.
+- Discover register statistic identifiers through the existing permission-scoped profile API; no account-specific dashboard configuration is required.
+- Add shared day/week/month/year controls, line/bar charts, explicit missing-data states, bounded frontend caching and stale-response protection.
+
 ## 0.5.0
 
 - Add per-account, per-meter interval caches and authenticated, entity-permission-scoped profile access. Default retention is 30 calendar days; 7–90 days are configurable.
