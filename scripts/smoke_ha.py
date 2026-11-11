@@ -9,7 +9,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import homeassistant  # Initialize HTTP/schema compatibility aliases first.
 import asyncio
-from datetime import datetime, UTC
+from datetime import datetime, UTC, timedelta
 import json
 import tempfile
 from unittest.mock import AsyncMock, patch
@@ -50,13 +50,22 @@ async def main():
             ServicePoint("123", "Test", True, True, "S1", None, None, None, {})
         ]
         channel = MeasurementChannel("456", "S-KWH-24H", "KWH", "24H", False, 8, 0, {})
+        from custom_components.eac_cyprus.time import PORTAL_TIME_ZONE
+        midnight = datetime.now(PORTAL_TIME_ZONE).replace(hour=0, minute=0, second=0, microsecond=0)
+        interval_stamp = midnight + timedelta(minutes=30)
+        profile_channels = tuple(
+            MeasurementChannel(str(500+i), f"KWH-30MIN-LP-{direction}", "KWH", "30MIN", True, 4, 3, {})
+            for i, direction in enumerate(("IMP", "EXP"))
+        )
         client.get_meter_configs.return_value = [
             MeterConfig(
-                "S1", "Test", "Test", datetime(2026, 1, 1), None, (channel,), {}
+                "S1", "Test", "Test", datetime(2026, 1, 1), None, (channel, *profile_channels), {}
             )
         ]
         client.get_readings.return_value = [
-            ChannelReadings("456", (Reading(datetime(2026, 11, 1), 10, 100),))
+            ChannelReadings("456", (Reading(datetime(2026, 11, 1), 10, 100),)),
+            ChannelReadings("500", (Reading(interval_stamp, 1.25, None),)),
+            ChannelReadings("501", (Reading(interval_stamp, .5, None),)),
         ]
         try:
             assert await async_setup_component(hass, "recorder", {"recorder": {}})
@@ -91,6 +100,21 @@ async def main():
                     if s.entity_id.startswith("sensor.")
                 ]
                 assert any(s.state in ("100", "100.0") for s in sensors), sensors
+                today = [s for s in sensors if "today_" in s.entity_id]
+                assert len(today) == 3
+                net = next(s for s in today if "today_net" in s.entity_id)
+                if datetime.now(PORTAL_TIME_ZONE) >= interval_stamp:
+                    assert float(net.state) == .75, net
+                    assert len(net.attributes["points"]) == 1
+                assert all("state_class" not in s.attributes for s in today)
+                # Verify the chart payload is not stored in Recorder.
+                from homeassistant.components.recorder.db_schema import StateAttributes
+                from sqlalchemy import select
+                def recorded_attributes():
+                    with get_instance(hass).get_session() as session:
+                        return session.execute(select(StateAttributes.shared_attrs)).scalars().all()
+                attributes = await get_instance(hass).async_add_executor_job(recorded_attributes)
+                assert not any('"points"' in item for item in attributes), attributes
                 # Verify a real recorder row, not just that enqueue returned.
                 from homeassistant.components.recorder.statistics import get_metadata
 
@@ -140,6 +164,7 @@ async def main():
                             "checks": [
                                 "config flow",
                                 "entity setup",
+                                "provisional sensors and graph payload exclusion",
                                 "actual SQLite statistics write",
                                 "repeat import idempotency",
                                 "reauth and reload",

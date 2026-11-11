@@ -39,6 +39,7 @@ from .const import (
     DOMAIN,
     channel_label,
 )
+from .provisional import INTERVAL_DIRECTIONS, today_profile
 from .statistics import (
     GRID_CHANNEL_DIRECTIONS,
     import_cumulative_history,
@@ -75,6 +76,8 @@ class MeterState:
     channels: dict[str, ChannelState]  # keyed by channel id
     measured_at: datetime | None  # provider dt of the newest reading (tz-aware UTC)
     received_at: datetime | None  # when this snapshot was fetched (tz-aware UTC)
+
+    today: dict | None = None
 
     @property
     def key(self) -> str:
@@ -217,6 +220,7 @@ class EacCoordinator(DataUpdateCoordinator[EacData]):
         """Fetch every channel's latest reading for one meter."""
         channels: dict[str, ChannelState] = {}
         grid_readings: dict[str, tuple[Reading, ...]] = {}
+        interval_readings: dict[str, tuple[Reading, ...]] = {}
         measured_at: datetime | None = None
         for ch in cfg.channels:
             try:
@@ -233,6 +237,12 @@ class EacCoordinator(DataUpdateCoordinator[EacData]):
                 continue
             if direction := GRID_CHANNEL_DIRECTIONS.get(ch.type):
                 grid_readings[direction] = matching.readings
+            if (
+                ch.interval
+                and ch.uom.upper() == "KWH"
+                and (direction := INTERVAL_DIRECTIONS.get(ch.type))
+            ):
+                interval_readings[direction] = matching.readings
             latest = max(matching.readings, key=lambda r: _as_utc(r.dt))
             channels[ch.id] = ChannelState(channel=ch, latest=latest)
             dt = _as_utc(latest.dt)
@@ -271,6 +281,13 @@ class EacCoordinator(DataUpdateCoordinator[EacData]):
             channels=channels,
             measured_at=measured_at,
             received_at=received_at,
+            today=today_profile(
+                interval_readings.get("import", ()),
+                interval_readings.get("export", ()),
+                received_at,
+            )
+            if cfg.removal_date is None
+            else None,
         )
 
 

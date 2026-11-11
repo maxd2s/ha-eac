@@ -43,10 +43,39 @@ Daily register observations cannot reconstruct when consumption happened within 
 
 Each sensor has its own `measured_at` attribute. Meter-wide diagnostic timestamps use the newest available reading across all channels. They can show a recent load profile while daily import/export registers remain older. `Data lag` is calculated at fetch time; it does not tick between polls. A successful poll can return unchanged data.
 
+## Today so far — provisional
+
+Meters exposing both `KWH-30MIN-LP-IMP` and `KWH-30MIN-LP-EXP` receive three
+additional sensors: **Today import provisional**, **Today export provisional**,
+and **Today net provisional**. They sum interval energy from matching, valid
+half-hour timestamps on the current Cyprus day. Both sides use exactly the
+same intervals. No matching readings means unknown, not zero. These values
+are grid energy, not total household consumption or total solar generation.
+
+The provisional view interprets portal timestamps as **interval ends**, with
+00:00 closing the previous day. This convention is an explicit assumption for
+the undocumented load-profile endpoint, not a billing guarantee. Offset-free
+DST ambiguity has the same limitation described above. Coverage counts use
+real elapsed UTC half-hours across 23/25-hour Cyprus days.
+
+Each refresh rebuilds from the already-fetched window, so repeated requests,
+restarts and corrections cannot accumulate duplicate energy. No additional API
+calls are made. Unmatched, negative, nonfinite, future and off-grid readings
+are excluded. The sensors expose paired/expected interval counts, internal gap
+count and `data_through`. Totals after gaps include received intervals only.
+They clear at the first minute tick of a new Cyprus day even if polling fails.
+
+These sensors have **no state class** and never write to the canonical daily
+register statistics. Only the net sensor includes the bounded `points` graph
+payload (up to 50 half-hours); that attribute is excluded from Recorder.
+This is a current-day preview, not a long-term interval archive.
+
+Optional dependency-free dashboard card: see [dashboard/README.md](../dashboard/README.md).
+
 ## Limitations
 
 - No automatic cumulative reset/rollover correction or stitching across physical meter replacements.
-- No historical half-hour load-profile statistics; those channels expose latest snapshots only.
+- No historical half-hour load-profile statistics; latest snapshots and a current-day provisional view are available.
 - No solar generation or total household consumption estimate from grid export alone.
 - A retired-meter snapshot is cached in memory until reload; later upstream corrections may require a reload or explicit history import.
 - Historical imports are bounded to 3,650 days and 10 minutes per account. Recorder queueing is asynchronous and not transactional across an import.
