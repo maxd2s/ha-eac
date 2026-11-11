@@ -1,6 +1,8 @@
 """EAC Cyprus integration for Home Assistant."""
+
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from homeassistant.components import persistent_notification
@@ -13,10 +15,11 @@ from homeassistant.core import (
     SupportsResponse,
     callback,
 )
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.service import async_register_admin_service
 
-from eac_dso_portal import EacClient
-
+from .client import EacClient
 from .const import CONF_BASE_URL, CONF_EMAIL, CONF_PASSWORD, DEFAULT_BASE_URL, DOMAIN
 from .coordinator import EacCoordinator
 from .history import async_import_full_history
@@ -40,6 +43,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     coordinator = EacCoordinator(hass, client, entry)
+    coordinator.connection_data = tuple(
+        entry.data.get(key) for key in (CONF_EMAIL, CONF_PASSWORD, CONF_BASE_URL)
+    )
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
@@ -60,8 +66,20 @@ def _async_register_services(hass: HomeAssistant) -> None:
     async def _handle_import(call: ServiceCall) -> ServiceResponse:
         details: list[dict] = []
         for coordinator in list(hass.data.get(DOMAIN, {}).values()):
-            details.extend(await async_import_full_history(hass, coordinator.client))
-            # Surface retired meters and their final readings on the next cycle.
+            if coordinator.history_import_running:
+                raise HomeAssistantError("An EAC history import is already running")
+            coordinator.history_import_running = True
+            try:
+                async with asyncio.timeout(600), coordinator.operation_lock:
+                    details.extend(
+                        await async_import_full_history(hass, coordinator.client)
+                    )
+            except Exception:
+                raise HomeAssistantError(
+                    "EAC history import interrupted; retry later"
+                ) from None
+            finally:
+                coordinator.history_import_running = False
             await coordinator.async_request_refresh()
         readings = sum(d["readings"] for d in details)
         persistent_notification.async_create(
@@ -79,7 +97,8 @@ def _async_register_services(hass: HomeAssistant) -> None:
             "details": details,
         }
 
-    hass.services.async_register(
+    async_register_admin_service(
+        hass,
         DOMAIN,
         SERVICE_IMPORT_HISTORY,
         _handle_import,
@@ -97,7 +116,7 @@ def _async_offer_history_import(hass: HomeAssistant, entry: ConfigEntry) -> None
         "To load your complete meter history into the Energy Dashboard, run the "
         "**EAC: Import full history** action once (Developer Tools -> Actions -> "
         "`eac_cyprus.import_full_history`). Regular polling only keeps a rolling "
-        "window; this backfills everything the portal has, for every meter.",
+        "window; this backfills available cumulative history, up to ten years.",
         title="EAC Cyprus: import full history",
         notification_id=f"{DOMAIN}_{entry.entry_id}_history",
     )
@@ -110,7 +129,13 @@ def _async_offer_history_import(hass: HomeAssistant, entry: ConfigEntry) -> None
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Apply changes from the options flow without reloading the entry."""
     coordinator: EacCoordinator = hass.data[DOMAIN][entry.entry_id]
-    coordinator.apply_options()
+    connection_data = tuple(
+        entry.data.get(key) for key in (CONF_EMAIL, CONF_PASSWORD, CONF_BASE_URL)
+    )
+    if connection_data != coordinator.connection_data:
+        hass.config_entries.async_schedule_reload(entry.entry_id)
+    else:
+        coordinator.apply_options()
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -118,4 +143,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
         hass.data[DOMAIN].pop(entry.entry_id, None)
+        if not hass.data[DOMAIN]:
+            hass.services.async_remove(DOMAIN, SERVICE_IMPORT_HISTORY)
     return unloaded

@@ -1,11 +1,12 @@
 """Tests for the EAC Cyprus DataUpdateCoordinator."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
 from eac_dso_portal import EacApiError, EacAuthError
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import UpdateFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.eac_cyprus.const import CONF_EMAIL, CONF_PASSWORD, DOMAIN
@@ -45,7 +46,7 @@ async def test_coordinator_update_active_and_inactive_points(
     assert ms.active is True
     assert ms.meter.serial_number == "NEW123"
     # Both channels (total + 30min) should produce a ChannelState
-    assert set(ms.channels) == {"mc-total-24h", "mc-30min-imp"}
+    assert set(ms.channels) == {"100001", "100002"}
 
     inactive = data.points["222222222222"]
     assert inactive.meters == {}
@@ -60,10 +61,10 @@ async def test_coordinator_update_failed_on_auth_error(
 
     try:
         await coord._async_update_data()
-    except UpdateFailed:
+    except ConfigEntryAuthFailed:
         pass
     else:
-        raise AssertionError("UpdateFailed was not raised")
+        raise AssertionError("ConfigEntryAuthFailed was not raised")
 
 
 async def test_coordinator_skips_failing_service_point(
@@ -89,7 +90,7 @@ async def test_coordinator_drops_channels_without_data(
     """Channels that the API has nothing for don't become sensors."""
     # Make get_readings raise for the 30-min channel only.
     real_side_effect = mock_client.get_readings.side_effect
-    raise_for: set[str] = {"mc-30min-imp"}
+    raise_for: set[str] = {"100002"}
 
     async def selective(sp_id, start, end, mc_id=None):
         if mc_id in raise_for:
@@ -105,4 +106,4 @@ async def test_coordinator_drops_channels_without_data(
     # Only the channel that returned data is present.
     meters = data.points["111111111111"].meters
     ms = next(iter(meters.values()))
-    assert set(ms.channels) == {"mc-total-24h"}
+    assert set(ms.channels) == {"100001"}

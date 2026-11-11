@@ -1,4 +1,2 @@
-pytest>=8
-pytest-asyncio>=0.23
-pytest-homeassistant-custom-component>=0.13
-eac-dso-portal==0.1.0
+pytest-homeassistant-custom-component==0.13.375
+eac-dso-portal==0.2.1

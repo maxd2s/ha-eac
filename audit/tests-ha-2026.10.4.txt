@@ -1,0 +1,5 @@
+Review date: 2026-11-11
+Component: 0.4.2
+Python 3.14; Home Assistant 2026.10.4; synthetic portal fixtures
+Command: python scripts/run_tests.py -q --tb=short
+88 passed in 3.71s

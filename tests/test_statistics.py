@@ -1,12 +1,15 @@
 """Tests for the long-term-statistics backfill module."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
 from unittest.mock import patch
 
 from eac_dso_portal import Reading
+from homeassistant.components.recorder.models.statistics import StatisticMeanType
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
+from homeassistant.util.unit_conversion import EnergyConverter
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.eac_cyprus.const import CONF_EMAIL, CONF_PASSWORD, DOMAIN
@@ -80,7 +83,8 @@ async def test_imports_cumulative_kwh_with_correct_metadata(
     assert metadata["statistic_id"] == "eac_cyprus:863224497404_mc-total"
     assert metadata["source"] == DOMAIN
     assert metadata["has_sum"] is True
-    assert metadata["has_mean"] is False
+    assert metadata["mean_type"] == StatisticMeanType.NONE
+    assert metadata["unit_class"] == EnergyConverter.UNIT_CLASS
     assert metadata["unit_of_measurement"] == UnitOfEnergy.KILO_WATT_HOUR
     # Display name is passed through verbatim (meter serial + channel label).
     assert metadata["name"] == "1281890 Energy total (24h)"
@@ -110,5 +114,90 @@ async def test_coordinator_pushes_stats_for_cumulative_channel_only(
     called_channels = [
         c.kwargs.get("channel_id") or c.args[2] for c in mock_import.call_args_list
     ]
-    assert "mc-total-24h" in called_channels
-    assert "mc-30min-imp" not in called_channels
+    assert "100001" in called_channels
+    assert "100002" not in called_channels
+
+
+async def test_channel_change_keeps_same_physical_meter_series(hass):
+    """A portal channel change must not restart a cumulative energy series."""
+    from custom_components.eac_cyprus.statistics import grid_statistic_id
+
+    with patch(
+        "custom_components.eac_cyprus.statistics.async_add_external_statistics"
+    ) as add:
+        for channel_id, channel_type, stamp, value in [
+            ("old", "S-KWH-24H", "2026-10-22T00:00:00", 9305.0),
+            ("new", "S-KWH-NET-IMP-MMTR", "2026-10-23T00:00:00", 9337.0),
+        ]:
+            import_cumulative_history(
+                hass,
+                "111",
+                channel_id,
+                "Meter",
+                _readings((stamp, value, 0)),
+                meter_serial="123",
+                channel_type=channel_type,
+            )
+    continuous = [
+        c
+        for c in add.call_args_list
+        if c.args[1]["statistic_id"] == grid_statistic_id("111", "123", "import")
+    ]
+    assert len(continuous) == 2
+    assert continuous[1].args[2][0]["sum"] - continuous[0].args[2][0]["sum"] == 32
+    # Cyprus midnight on the 23rd closes the UTC hour starting 20:00 on the 22nd.
+    assert continuous[1].args[2][0]["start"] == datetime(2026, 10, 22, 20, tzinfo=UTC)
+
+
+async def test_tariffs_do_not_duplicate_grid_total(hass):
+    with patch(
+        "custom_components.eac_cyprus.statistics.async_add_external_statistics"
+    ) as add:
+        import_cumulative_history(
+            hass,
+            "111",
+            "tariff",
+            "Tariff",
+            _readings(("2026-10-23T00:00:00", 100, 0)),
+            meter_serial="123",
+            channel_type="S-KWH-NORMAL",
+        )
+    assert add.call_count == 1
+
+
+def test_grid_register_closes_day_and_month_across_dst():
+    from custom_components.eac_cyprus.statistics import grid_statistics_rows
+
+    rows = grid_statistics_rows(
+        _readings(
+            ("2026-10-25T00:00:00", 100, 0),
+            ("2026-10-26T00:00:00", 110, 0),
+            ("2026-11-01T00:00:00", 120, 0),
+        )
+    )
+    assert [r["start"] for r in rows] == [
+        datetime(2026, 10, 24, 20, tzinfo=UTC),
+        datetime(2026, 10, 25, 21, tzinfo=UTC),
+        datetime(2026, 10, 31, 21, tzinfo=UTC),
+    ]
+
+
+async def test_net_export_can_be_negative_and_unpaired_values_are_omitted(hass):
+    from custom_components.eac_cyprus.statistics import import_grid_net_history
+
+    imports = _readings(
+        ("2026-11-01T00:00:00", 100, 0),
+        ("2026-11-02T00:00:00", 104, 0),
+        ("2026-11-03T00:00:00", 105, 0),
+    )
+    exports = _readings(
+        ("2026-11-01T00:00:00", 110, 0), ("2026-11-02T00:00:00", 127, 0)
+    )
+    with patch(
+        "custom_components.eac_cyprus.statistics.async_add_external_statistics"
+    ) as add:
+        import_grid_net_history(hass, "111", "123", imports, exports)
+    rows = add.call_args.args[2]
+    assert len(rows) == 2
+    assert [r["sum"] for r in rows] == [-10, -23]
+    assert rows[1]["sum"] - rows[0]["sum"] == -13

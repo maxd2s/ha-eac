@@ -1,0 +1,55 @@
+{
+  "dependencies": [
+    {
+      "name": "eac-dso-portal",
+      "version": "0.2.1",
+      "vulns": []
+    },
+    {
+      "name": "aiohttp",
+      "version": "3.14.5",
+      "vulns": []
+    },
+    {
+      "name": "multidict",
+      "version": "7.2.1",
+      "vulns": []
+    },
+    {
+      "name": "yarl",
+      "version": "1.25.1",
+      "vulns": []
+    },
+    {
+      "name": "aiohappyeyeballs",
+      "version": "2.7.1",
+      "vulns": []
+    },
+    {
+      "name": "aiosignal",
+      "version": "1.4.0",
+      "vulns": []
+    },
+    {
+      "name": "attrs",
+      "version": "26.1.0",
+      "vulns": []
+    },
+    {
+      "name": "frozenlist",
+      "version": "1.8.0",
+      "vulns": []
+    },
+    {
+      "name": "idna",
+      "version": "3.20",
+      "vulns": []
+    },
+    {
+      "name": "propcache",
+      "version": "0.5.4",
+      "vulns": []
+    }
+  ],
+  "fixes": []
+}

@@ -1,0 +1,97 @@
+[
+  {
+    "key": "eac-dso-portal",
+    "package_name": "eac-dso-portal",
+    "installed_version": "0.2.1",
+    "required_version": "0.2.1",
+    "dependencies": [
+      {
+        "key": "aiohttp",
+        "package_name": "aiohttp",
+        "installed_version": "3.14.5",
+        "required_version": ">=3.9",
+        "dependencies": [
+          {
+            "key": "aiohappyeyeballs",
+            "package_name": "aiohappyeyeballs",
+            "installed_version": "2.7.1",
+            "required_version": ">=2.5.0",
+            "dependencies": []
+          },
+          {
+            "key": "aiosignal",
+            "package_name": "aiosignal",
+            "installed_version": "1.4.0",
+            "required_version": ">=1.4.0",
+            "dependencies": [
+              {
+                "key": "frozenlist",
+                "package_name": "frozenlist",
+                "installed_version": "1.8.0",
+                "required_version": ">=1.1.0",
+                "dependencies": []
+              }
+            ]
+          },
+          {
+            "key": "attrs",
+            "package_name": "attrs",
+            "installed_version": "26.1.0",
+            "required_version": ">=17.3.0",
+            "dependencies": []
+          },
+          {
+            "key": "frozenlist",
+            "package_name": "frozenlist",
+            "installed_version": "1.8.0",
+            "required_version": ">=1.1.1",
+            "dependencies": []
+          },
+          {
+            "key": "multidict",
+            "package_name": "multidict",
+            "installed_version": "7.2.1",
+            "required_version": ">=4.5,<8.0",
+            "dependencies": []
+          },
+          {
+            "key": "propcache",
+            "package_name": "propcache",
+            "installed_version": "0.5.4",
+            "required_version": ">=0.2.0",
+            "dependencies": []
+          },
+          {
+            "key": "yarl",
+            "package_name": "yarl",
+            "installed_version": "1.25.1",
+            "required_version": ">=1.25.1,<2.0",
+            "dependencies": [
+              {
+                "key": "idna",
+                "package_name": "idna",
+                "installed_version": "3.20",
+                "required_version": ">=2.0",
+                "dependencies": []
+              },
+              {
+                "key": "multidict",
+                "package_name": "multidict",
+                "installed_version": "7.2.1",
+                "required_version": ">=4.0",
+                "dependencies": []
+              },
+              {
+                "key": "propcache",
+                "package_name": "propcache",
+                "installed_version": "0.5.4",
+                "required_version": ">=0.2.1",
+                "dependencies": []
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]
