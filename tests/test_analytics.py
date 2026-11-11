@@ -129,6 +129,10 @@ async def test_discovery_and_profile_require_entity_read_permission(
     ws_profile(hass, connection, {"id": 2, "entity_id": entity})
     result = connection.send_result.call_args.args[1]
     assert "points" in result and "password" not in result
+    assert set(result["statistic_ids"]) == {"import", "export", "net"}
+    assert all(
+        value.startswith("eac_cyprus:") for value in result["statistic_ids"].values()
+    )
     assert not any(
         "points" in s.attributes
         for s in hass.states.async_all()
