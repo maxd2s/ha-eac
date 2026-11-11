@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.3
+
+- Add current-day provisional import/export/net sensors from matching half-hour readings, with coverage and gap diagnostics. Reuse existing requests; keep register statistics unchanged.
+- Add an optional dependency-free Today so far dashboard card with cumulative import/export lines, totals and missing-data indicators.
+- Bound chart payloads to one Cyprus day and exclude them from Recorder history.
+
+
 ## 0.4.2 — 2026-11-11 (initial public beta)
 
 - Restrict adapter requests to supported portal routes; reject invalid bearer-token header characters, deeply nested JSON and non-standard JSON constants.

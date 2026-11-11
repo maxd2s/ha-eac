@@ -34,10 +34,14 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, MANUFACTURER, channel_label
 from .coordinator import EacCoordinator, MeterState, ServicePoint
+from .provisional import INTERVAL_DIRECTIONS
+from .time import PORTAL_TIME_ZONE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -138,6 +142,7 @@ async def async_setup_entry(
     known_channels: set[tuple[str, str]] = set()  # (meter_key, channel_id)
     known_meters: set[str] = set()  # meter_key (diagnostics created once)
     known_sps: set[str] = set()
+    known_profiles: set[str] = set()
 
     @callback
     def _add_new_entities() -> None:
@@ -159,6 +164,22 @@ async def async_setup_entry(
                         EacChannelSensor(
                             coordinator, sp.id, ms.key, ch_state.channel.id
                         )
+                    )
+                if (
+                    ms.active
+                    and ms.key not in known_profiles
+                    and set(INTERVAL_DIRECTIONS).issubset(
+                        {
+                            ch.type
+                            for ch in ms.meter.channels
+                            if ch.interval and ch.uom.upper() == "KWH"
+                        }
+                    )
+                ):
+                    known_profiles.add(ms.key)
+                    new.extend(
+                        EacTodaySensor(coordinator, sp.id, ms.key, direction)
+                        for direction in ("import", "export", "net")
                     )
                 # Per-meter diagnostics, only for the active meter.
                 if ms.active and ms.key not in known_meters:
@@ -250,9 +271,8 @@ class EacChannelSensor(_MeterEntity, SensorEntity):
             "interval": ch.channel.interval,
             "measured_at": _iso(ch.latest.dt),
         }
-        if ch.latest.reading is not None:
-            if math.isfinite(ch.latest.reading):
-                attrs["cumulative_reading"] = ch.latest.reading
+        if ch.latest.reading is not None and math.isfinite(ch.latest.reading):
+            attrs["cumulative_reading"] = ch.latest.reading
         return attrs
 
 
@@ -316,3 +336,73 @@ class EacLagSensor(_MeterEntity, SensorEntity):
 
 def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt is not None else None
+
+
+class EacTodaySensor(_MeterEntity, SensorEntity):
+    """Provisional sums of matching intervals; never feed canonical statistics."""
+
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_suggested_display_precision = 2
+    _unrecorded_attributes = frozenset({"points"})
+
+    def __init__(self, coordinator, sp_id, meter_key, direction):
+        super().__init__(coordinator, sp_id, meter_key)
+        self._direction = direction
+        self._calendar_date = dt_util.utcnow().astimezone(PORTAL_TIME_ZONE).date()
+        self._attr_name = f"Today {direction} provisional"
+        self._attr_unique_id = f"{meter_key}_today_{direction}_provisional"
+        self._attr_device_info = meter_device_info(self._meter, coordinator)
+
+    async def async_added_to_hass(self):
+        await super().async_added_to_hass()
+        # Clear yesterday even if a poll fails at midnight. A once-per-minute
+        # date check also works when HA uses a different display time zone.
+        self.async_on_remove(
+            async_track_time_change(self.hass, self._check_day, second=0)
+        )
+
+    @callback
+    def _check_day(self, now):
+        date = now.astimezone(PORTAL_TIME_ZONE).date()
+        if date != self._calendar_date:
+            self._calendar_date = date
+            self.async_write_ha_state()
+
+    @property
+    def _today(self):
+        ms = self._meter
+        profile = ms.today if ms else None
+        if (
+            profile
+            and profile["date"]
+            == dt_util.utcnow().astimezone(PORTAL_TIME_ZONE).date().isoformat()
+        ):
+            return profile
+        return None
+
+    @property
+    def native_value(self):
+        profile = self._today
+        if not profile or profile["import_kwh"] is None:
+            return None
+        if self._direction == "net":
+            return profile["import_kwh"] - profile["export_kwh"]
+        return profile[f"{self._direction}_kwh"]
+
+    @property
+    def extra_state_attributes(self):
+        profile = self._today
+        if not profile:
+            return (
+                {"provisional": True, "points": []}
+                if self._direction == "net"
+                else {"provisional": True}
+            )
+        # Only one entity carries the bounded graph payload (max 50 rows on
+        # the autumn DST day). Recorder excludes it from historical states.
+        return {
+            key: value
+            for key, value in profile.items()
+            if key != "points" or self._direction == "net"
+        }
