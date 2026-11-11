@@ -4,7 +4,7 @@ Read your Cyprus EAC DSO meter account in Home Assistant, with delayed import/ex
 
 This fork of [SantaFox/ha-eac](https://github.com/SantaFox/ha-eac) adds constrained HTTPS transport, reauthentication, bounded history imports, and continuous statistics across channel changes on the same meter. It uses the pinned [`eac-dso-portal`](https://github.com/SantaFox/eac-dso-portal) parser. Upstream attribution and the MIT license are retained.
 
-Version **0.5.0** adds configurable interval insights and DSO-reported tariff codes to the public beta. See the [changelog](CHANGELOG.md) and documented data limitations before relying on it for billing comparisons.
+Version **0.5.1** combines balances, charts, demand insights and DSO tariff codes in an optional [single-page Solar & grid dashboard](dashboard/README.md). See the [changelog](CHANGELOG.md) and documented data limitations before relying on it for billing comparisons.
 
 ## Requirements
 
