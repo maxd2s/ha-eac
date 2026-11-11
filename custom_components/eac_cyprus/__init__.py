@@ -23,6 +23,7 @@ from .client import EacClient
 from .const import CONF_BASE_URL, CONF_EMAIL, CONF_PASSWORD, DEFAULT_BASE_URL, DOMAIN
 from .coordinator import EacCoordinator
 from .history import async_import_full_history
+from .websocket import async_register_profile_api
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -50,6 +51,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     _async_register_services(hass)
+    async_register_profile_api(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     _async_offer_history_import(hass, entry)

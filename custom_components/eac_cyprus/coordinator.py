@@ -28,8 +28,20 @@ from eac_dso_portal.exceptions import EacRateLimitError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+from .analytics import (
+    CONF_NIGHT_END,
+    CONF_NIGHT_START,
+    CONF_PROFILE_DAYS,
+    DEFAULT_NIGHT_END,
+    DEFAULT_NIGHT_START,
+    DEFAULT_PROFILE_DAYS,
+    merge_profile,
+    profile_insights,
+    window_start,
+)
 from .client import EacClient
 from .const import (
     CONF_HISTORY_DAYS,
@@ -78,6 +90,8 @@ class MeterState:
     received_at: datetime | None  # when this snapshot was fetched (tz-aware UTC)
 
     today: dict | None = None
+    insights: dict | None = None
+    tariff: dict | None = None
 
     @property
     def key(self) -> str:
@@ -124,6 +138,9 @@ class EacCoordinator(DataUpdateCoordinator[EacData]):
         self._entry = entry
         # Retired meters never change; cache their final snapshot by meter_key.
         self._retired_cache: dict[str, MeterState] = {}
+        self._profile_store = Store(hass, 1, f"{DOMAIN}_profiles_{entry.entry_id}")
+        self._profiles: dict = {}
+        self._profiles_loaded = False
 
     @property
     def client(self) -> EacClient:
@@ -156,6 +173,10 @@ class EacCoordinator(DataUpdateCoordinator[EacData]):
             ) from None
 
     async def _fetch_data(self) -> EacData:
+        if not self._profiles_loaded:
+            saved = await self._profile_store.async_load()
+            self._profiles = saved if isinstance(saved, dict) else {}
+            self._profiles_loaded = True
         user = await self._client.get_user_details()
         sps = await self._client.list_service_points()
 
@@ -193,6 +214,8 @@ class EacCoordinator(DataUpdateCoordinator[EacData]):
             for key, value in self._retired_cache.items()
             if key in current_keys
         }
+        self._profiles = {k: v for k, v in self._profiles.items() if k in current_keys}
+        await self._profile_store.async_save(self._profiles)
         return EacData(user=user, points=points, last_success_time=datetime.now(UTC))
 
     async def _retired_meter(
@@ -222,10 +245,53 @@ class EacCoordinator(DataUpdateCoordinator[EacData]):
         grid_readings: dict[str, tuple[Reading, ...]] = {}
         interval_readings: dict[str, tuple[Reading, ...]] = {}
         measured_at: datetime | None = None
+        key = meter_key(sp.id, cfg)
+        cache = self._profiles.setdefault(key, {})
+        days = self._entry.options.get(CONF_PROFILE_DAYS, DEFAULT_PROFILE_DAYS)
+        night_start = self._entry.options.get(CONF_NIGHT_START, DEFAULT_NIGHT_START)
+        night_end = self._entry.options.get(CONF_NIGHT_END, DEFAULT_NIGHT_END)
+        bounds = {
+            str(ch["id"]): (
+                _as_utc(datetime.fromisoformat(conf["startDate"]))
+                if conf.get("startDate")
+                else None,
+                _as_utc(datetime.fromisoformat(conf["endDate"]))
+                if conf.get("endDate")
+                else None,
+            )
+            for conf in cfg.raw.get("configurationsList", [])
+            for ch in conf.get("mcList", [])
+        }
         for ch in cfg.channels:
+            direction = (
+                INTERVAL_DIRECTIONS.get(ch.type)
+                if ch.interval and ch.uom.upper() == "KWH"
+                else None
+            )
+            request_start, request_end = start, end
+            if direction and cfg.removal_date is None:
+                last = cache.get("fetched", {}).get(ch.id)
+                previous = (
+                    datetime.fromtimestamp(last, UTC)
+                    if isinstance(last, (int, float))
+                    else window_start(received_at, days)
+                )
+                # A larger configured window triggers a one-time extra backfill.
+                if cache.get("seed_days", {}).get(ch.id, 0) < days:
+                    previous = window_start(received_at, days)
+                request_start = max(
+                    window_start(received_at, days), min(start, previous)
+                )
+            bound_start, bound_end = bounds.get(ch.id, (None, None))
+            request_start = (
+                max(request_start, bound_start) if bound_start else request_start
+            )
+            request_end = min(request_end, bound_end) if bound_end else request_end
+            if request_start >= request_end:
+                continue
             try:
                 per_channel = await self._client.get_readings(
-                    sp.id, start, end, mc_id=ch.id
+                    sp.id, request_start, request_end, mc_id=ch.id
                 )
             except EacRateLimitError:
                 raise
@@ -233,6 +299,18 @@ class EacCoordinator(DataUpdateCoordinator[EacData]):
                 _LOGGER.debug("Channel readings unavailable (HTTP %s)", err.status)
                 continue
             matching = next((cr for cr in per_channel if cr.channel_id == ch.id), None)
+            if direction and cfg.removal_date is None and matching is not None:
+                merge_profile(
+                    cache,
+                    direction,
+                    matching.readings,
+                    request_start,
+                    request_end,
+                    received_at,
+                    days,
+                )
+                cache.setdefault("fetched", {})[ch.id] = received_at.timestamp()
+                cache.setdefault("seed_days", {})[ch.id] = days
             if matching is None or not matching.readings:
                 continue
             if direction := GRID_CHANNEL_DIRECTIONS.get(ch.type):
@@ -274,6 +352,37 @@ class EacCoordinator(DataUpdateCoordinator[EacData]):
             grid_readings.get("import", ()),
             grid_readings.get("export", ()),
         )
+        insights = None
+        if cfg.removal_date is None:
+            for direction in ("import", "export"):
+                merge_profile(cache, direction, (), start, end, received_at, days)
+            insights = profile_insights(
+                cache, received_at, days, night_start, night_end
+            )
+            if (
+                cfg.serial_number
+                and received_at.timestamp() - cache.get("tariff_attempt", 0) >= 86400
+            ):
+                cache["tariff_attempt"] = received_at.timestamp()
+                try:
+                    code = await self._client.get_tariff_code(
+                        sp.id, cfg.serial_number, received_at
+                    )
+                except (
+                    EacApiError,
+                    EacAuthError,
+                    aiohttp.ClientError,
+                    TimeoutError,
+                    ValueError,
+                    TypeError,
+                ):
+                    code = None
+                if isinstance(code, str) and code:
+                    cache["tariff"] = {
+                        "code": code,
+                        "retrieved_at": received_at.isoformat(),
+                        "source": "DSO consumption report",
+                    }
         return MeterState(
             service_point=sp,
             meter=cfg,
@@ -281,6 +390,8 @@ class EacCoordinator(DataUpdateCoordinator[EacData]):
             channels=channels,
             measured_at=measured_at,
             received_at=received_at,
+            insights=insights,
+            tariff=cache.get("tariff"),
             today=today_profile(
                 interval_readings.get("import", ()),
                 interval_readings.get("export", ()),

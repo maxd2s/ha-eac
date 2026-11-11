@@ -30,3 +30,7 @@ Include the affected commit/version, HA version, impact, and a reproduction usin
 Keep `.env`, HA tokens, deployment authentication files and live data outside Git. `.env` used by the optional SMB helper is executable shell configuration: only source a file you created and trust. Never run it from an untrusted checkout. CI uses synthetic fixtures, read-only repository permissions and pinned action revisions; no production credentials are needed.
 
 A dependency scanner reports known advisories, not all vulnerabilities. Recheck dependencies and the transport overrides whenever upgrading `eac-dso-portal` or HA.
+
+### Interval insights and tariff reports
+
+The profile WebSocket commands require HA authentication and enforce read access to each meter's Profile coverage entity. Cached intervals contain private consumption data and belong in private HA backups. Tariff reports use the same fixed-origin, bounded transport as other API requests; only the parsed tariff identifier and retrieval metadata are retained. Raw report contents are neither logged nor stored.

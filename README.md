@@ -4,7 +4,7 @@ Read your Cyprus EAC DSO meter account in Home Assistant, with delayed import/ex
 
 This fork of [SantaFox/ha-eac](https://github.com/SantaFox/ha-eac) adds constrained HTTPS transport, reauthentication, bounded history imports, and continuous statistics across channel changes on the same meter. It uses the pinned [`eac-dso-portal`](https://github.com/SantaFox/eac-dso-portal) parser. Upstream attribution and the MIT license are retained.
 
-Version **0.4.3** adds a provisional current-day view to the public beta. See the [changelog](CHANGELOG.md) and documented data limitations before relying on it for billing comparisons.
+Version **0.5.0** adds configurable interval insights and DSO-reported tariff codes to the public beta. See the [changelog](CHANGELOG.md) and documented data limitations before relying on it for billing comparisons.
 
 ## Requirements
 
@@ -38,6 +38,8 @@ Each service point is a parent device; each physical meter is a child device. Me
 | Grid energy imported / Energy total (24h) | Cumulative electricity drawn from the grid, kWh |
 | Grid energy exported / Energy exported | Cumulative electricity sent to the grid, kWh |
 | Energy peak / off-peak tariff | Cumulative tariff registers; these are portions of import, not extra consumption |
+| Profile coverage / typical overnight demand / highest half-hour demand | Configurable cached interval insights; no inferred zero values |
+| Tariff code | Identifier from the DSO report, with retrieval time; no hardcoded prices |
 | Today import/export/net provisional | Sum of matching half-hour readings for today, with coverage and gaps; optional [dashboard card](dashboard/README.md) |
 | Power import/export (30-min average) | Latest available interval energy divided by half an hour, in kW; not instantaneous power |
 | Data measured at | Newest measurement timestamp across the meter's channels |
