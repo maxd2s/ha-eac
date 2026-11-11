@@ -102,6 +102,7 @@ async def test_live_entities_fetch_replacement_midnight_and_no_statistics(
     states = [s for s in hass.states.async_all() if "today_" in s.entity_id]
     assert len(states) == 3
     from custom_components.eac_cyprus.sensor import EacTodaySensor
+
     assert "points" in EacTodaySensor._unrecorded_attributes
     net_id = next(s.entity_id for s in states if "today_net" in s.entity_id)
     net = hass.states.get(net_id)
