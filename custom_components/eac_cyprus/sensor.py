@@ -251,7 +251,8 @@ class EacChannelSensor(_MeterEntity, SensorEntity):
             "measured_at": _iso(ch.latest.dt),
         }
         if ch.latest.reading is not None:
-            attrs["cumulative_reading"] = ch.latest.reading
+            if math.isfinite(ch.latest.reading):
+                attrs["cumulative_reading"] = ch.latest.reading
         return attrs
 
 
@@ -274,7 +275,7 @@ class EacMeasuredAtSensor(_MeterEntity, SensorEntity):
 
 
 class EacReceivedAtSensor(_MeterEntity, SensorEntity):
-    """When HA last fetched fresh data for this meter."""
+    """When HA last fetched this snapshot, even if readings were unchanged."""
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_device_class = SensorDeviceClass.TIMESTAMP

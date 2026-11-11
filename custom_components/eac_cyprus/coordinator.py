@@ -39,7 +39,11 @@ from .const import (
     DOMAIN,
     channel_label,
 )
-from .statistics import import_cumulative_history
+from .statistics import (
+    GRID_CHANNEL_DIRECTIONS,
+    import_cumulative_history,
+    import_grid_net_history,
+)
 from .time import as_utc as _as_utc
 
 _LOGGER = logging.getLogger(__name__)
@@ -128,30 +132,29 @@ class EacCoordinator(DataUpdateCoordinator[EacData]):
         self.update_interval = _interval_from_options(self._entry)
 
     async def _async_update_data(self) -> EacData:
-        async with self.operation_lock:
-            try:
-                async with asyncio.timeout(180):
-                    return await self._fetch_data()
-            except EacAuthError:
-                raise ConfigEntryAuthFailed("EAC login needs to be renewed") from None
-            except (
-                EacApiError,
-                aiohttp.ClientError,
-                TimeoutError,
-                ValueError,
-                TypeError,
-                KeyError,
-            ):
-                raise UpdateFailed(
-                    "EAC portal update failed; retrying on the next refresh"
-                ) from None
+        try:
+            async with asyncio.timeout(180), self.operation_lock:
+                return await self._fetch_data()
+        except EacAuthError:
+            raise ConfigEntryAuthFailed("EAC login needs to be renewed") from None
+        except (
+            EacApiError,
+            aiohttp.ClientError,
+            TimeoutError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OverflowError,
+            RecursionError,
+        ):
+            raise UpdateFailed(
+                "EAC portal update failed; retrying on the next refresh"
+            ) from None
 
     async def _fetch_data(self) -> EacData:
-        try:
-            user = await self._client.get_user_details()
-            sps = await self._client.list_service_points()
-        except (EacAuthError, EacApiError):
-            raise
+        user = await self._client.get_user_details()
+        sps = await self._client.list_service_points()
 
         received_at = datetime.now(UTC)
         history_days = self._entry.options.get(CONF_HISTORY_DAYS, DEFAULT_HISTORY_DAYS)
@@ -213,6 +216,7 @@ class EacCoordinator(DataUpdateCoordinator[EacData]):
     ) -> MeterState:
         """Fetch every channel's latest reading for one meter."""
         channels: dict[str, ChannelState] = {}
+        grid_readings: dict[str, tuple[Reading, ...]] = {}
         measured_at: datetime | None = None
         for ch in cfg.channels:
             try:
@@ -227,7 +231,9 @@ class EacCoordinator(DataUpdateCoordinator[EacData]):
             matching = next((cr for cr in per_channel if cr.channel_id == ch.id), None)
             if matching is None or not matching.readings:
                 continue
-            latest = max(matching.readings, key=lambda r: r.dt)
+            if direction := GRID_CHANNEL_DIRECTIONS.get(ch.type):
+                grid_readings[direction] = matching.readings
+            latest = max(matching.readings, key=lambda r: _as_utc(r.dt))
             channels[ch.id] = ChannelState(channel=ch, latest=latest)
             dt = _as_utc(latest.dt)
             if dt is not None and (measured_at is None or dt > measured_at):
@@ -247,8 +253,17 @@ class EacCoordinator(DataUpdateCoordinator[EacData]):
                     ch.id,
                     f"{serial} {channel_label(ch.type)}",
                     matching.readings,
+                    meter_serial=cfg.serial_number,
+                    channel_type=ch.type,
                 )
 
+        import_grid_net_history(
+            self.hass,
+            sp.id,
+            cfg.serial_number,
+            grid_readings.get("import", ()),
+            grid_readings.get("export", ()),
+        )
         return MeterState(
             service_point=sp,
             meter=cfg,

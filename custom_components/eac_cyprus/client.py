@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import re
 import time
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -23,6 +24,36 @@ from .const import DEFAULT_BASE_URL
 
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=10, sock_read=20)
+_ENDPOINT = re.compile(
+    r"/api/portal/(?:login|userDetails|servicePoints(?:/[A-Za-z0-9_-]{1,128})?|readings/list)"
+)
+_PARSE_ERRORS = (
+    ValueError,
+    TypeError,
+    KeyError,
+    AttributeError,
+    OverflowError,
+    RecursionError,
+)
+
+
+def _reject_constant(value: str) -> None:
+    """Reject non-standard JSON constants without echoing server content."""
+    raise ValueError("Nonfinite JSON constant")
+
+
+def _bounded_json(body: bytearray):
+    """Limit nested structures even on Python versions with iterative decoders."""
+    data = json.loads(body, parse_constant=_reject_constant)
+    stack = [(data, 0)]
+    while stack:
+        item, depth = stack.pop()
+        if depth > 32:
+            raise ValueError("Portal JSON nesting limit exceeded")
+        if isinstance(item, (dict, list)):
+            values = item.values() if isinstance(item, dict) else item
+            stack.extend((v, depth + 1) for v in values if isinstance(v, (dict, list)))
+    return data
 
 
 def validate_base_url(value: str) -> str:
@@ -53,6 +84,8 @@ class EacClient(UpstreamClient):
         json_body=None,
         params=None,
     ):
+        if not _ENDPOINT.fullmatch(path):
+            raise EacApiError(0, "Unsupported portal endpoint")
         if time.monotonic() < self._retry_after:
             raise EacRateLimitError(429, "Portal rate limit; try later")
         headers = {"Authorization": f"Bearer {self._jwt}"} if authenticated else {}
@@ -91,8 +124,8 @@ class EacClient(UpstreamClient):
                 if len(body) > MAX_RESPONSE_BYTES:
                     raise EacApiError(200, "Portal response exceeds size limit")
             try:
-                return status, json.loads(body)
-            except (ValueError, UnicodeError):
+                return status, _bounded_json(body)
+            except (ValueError, UnicodeError, RecursionError):
                 raise EacApiError(200, "Invalid portal JSON response") from None
 
     async def _login_unlocked(self):
@@ -110,7 +143,13 @@ class EacClient(UpstreamClient):
         if status != 200:
             raise EacApiError(status, "Portal login failed")
         token = data.get("jwt") if isinstance(data, dict) else None
-        if not isinstance(token, str) or not token or len(token) > 16384:
+        if (
+            not isinstance(token, str)
+            or not token
+            or len(token) > 16384
+            or not token.isascii()
+            or any(ord(char) <= 32 or ord(char) == 127 for char in token)
+        ):
             raise EacAuthError("Invalid portal login response")
         self._jwt = token
 
@@ -150,7 +189,28 @@ class EacClient(UpstreamClient):
                 raise EacApiError(status, "Portal request failed")
         raise EacAuthError("Portal authorization failed")
 
+    async def get_user_details(self):
+        try:
+            return await super().get_user_details()
+        except _PARSE_ERRORS:
+            raise EacApiError(200, "Invalid portal user response") from None
+
+    async def list_service_points(self):
+        try:
+            return await super().list_service_points()
+        except _PARSE_ERRORS:
+            raise EacApiError(200, "Invalid portal service point response") from None
+
+    async def get_meter_configs(self, sp_id):
+        try:
+            return await super().get_meter_configs(sp_id)
+        except _PARSE_ERRORS:
+            raise EacApiError(200, "Invalid portal meter response") from None
+
     async def get_readings(self, sp_id, start, end, mc_id=None, chunk_days=14):
-        if not 1 <= chunk_days <= 14:
+        if type(chunk_days) is not int or not 1 <= chunk_days <= 14:
             raise ValueError("chunk_days must be between 1 and 14")
-        return await super().get_readings(sp_id, start, end, mc_id, chunk_days)
+        try:
+            return await super().get_readings(sp_id, start, end, mc_id, chunk_days)
+        except _PARSE_ERRORS:
+            raise EacApiError(200, "Invalid portal readings response") from None

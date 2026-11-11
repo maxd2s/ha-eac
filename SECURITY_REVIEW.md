@@ -1,55 +1,64 @@
-# Security, compatibility and performance review
+# Security, reliability and maintenance review
 
-Review date: 2026-11-11. Upstream base: `SantaFox/ha-eac@c783990a811e99b6cd67cd5e9f8498dbaab67c62`. Fork: `maxd2s/ha-eac`, branch `harden-modernize-eac`, component version 0.4.0.
+Reviewed **2026-11-11**, component **0.4.2**, fork `maxd2s/ha-eac`, branch `harden-modernize-eac`. Original upstream base: `SantaFox/ha-eac@c783990a811e99b6cd67cd5e9f8498dbaab67c62`.
 
-## Scope and result
+## Result and scope
 
-Reviewed the integration, the Python source of its pinned `eac-dso-portal==0.2.1` dependency, its deployment helper, and CI configuration. The PyPI wheel SHA-256 was `0fcdbc2bf3581ddce54f0adaa579a85318cb12b536ed5d57e02127d354c8c0f8` and matched PyPI metadata. No obvious unrelated network endpoints, telemetry, dynamic code execution, or malicious persistence were found in the reviewed runtime code. This is a scoped code review, not an independent penetration test or a guarantee of safety.
+Reviewed runtime code, the installed source of pinned `eac-dso-portal==0.2.1`, config/reauth flows, statistics, history imports, the deployment helper, CI and documentation. The working tree included the previously deployed 0.4.1 continuous-grid changes; these were preserved and reviewed too.
 
-No production HA files were changed, no live DSO credentials were used, and no portal history was imported during the review. Installation remains a separate approval step.
+No critical/high-severity vulnerability or unrelated telemetry/execution behavior was identified in this scoped review. Several privacy, availability and deployment reliability gaps were fixed below. This is a code review plus synthetic tests and known-advisory scans, not an independent penetration test, audit of EAC's servers, or guarantee of safety.
 
-## Findings and changes
+This revision was tested locally with synthetic portal responses. It was **not deployed to production Home Assistant** as part of this review. Earlier integration versions have been used with a live account, but that is not a substitute for testing these changes.
 
-| Finding | Preconditions / impact | Resolution |
+## New findings fixed in 0.4.2
+
+| Finding | Impact and precondition | Change |
 |---|---|---|
-| Configurable portal origin accepted HTTP and arbitrary hosts | An administrator could accidentally send the portal password to the wrong server. This is not an unauthenticated remote exploit. | Removed the URL field; adapter rejects every origin except the official HTTPS portal, including legacy stored custom origins. |
-| Login followed redirects | A malicious or compromised endpoint could redirect a credential-bearing POST. | All redirects refused; certificate verification remains enabled. |
-| Error response bodies included in exceptions | Server-provided private/account data could reach logs. | Generic status-only exceptions; no error bodies read; unexpected config-flow errors do not log a traceback or payload. Routine import logs no longer include account/meter identifiers. |
-| Requests relied on session defaults and unbounded JSON reads | Slow/large responses could retain resources. | 30 s total / 10 s connect / 20 s read deadline; 2 MiB decoded response limit; 180 s polling deadline. |
-| Concurrent login/expired-token refresh | Parallel callers could duplicate logins and race session tokens. | Serial transport with an async lock; only one 401 refresh/retry per request. HTTP 429 cooldown uses Retry-After, bounded to 60 s–24 h. |
-| Invalid credentials surfaced as transient polling failures | No normal credential recovery flow. | ConfigEntryAuthFailed and tested reauthentication preserving entity/statistic identity. Credential changes reload via the update listener; unchanged credentials also restart the entry. |
-| Deep-history import retained whole date ranges and allowed overlapping calls | Large accounts consume more memory and duplicate portal requests. | Sequential 14-day batches, boundary deduplication, a per-account operation lock, duplicate-import rejection, admin-only action, and a 10-minute import deadline. Partial failures no longer produce a success notification. |
-| Old statistics/device/lifecycle API use | HA compatibility warnings and future breakage. | mean_type/unit_class metadata, via_device_id, ConfigEntry-aware coordinator and update-listener reload handling. |
-| Unknown channel fallback referenced missing `_label` | New channel types could crash setup. | Use the shared channel-label fallback. |
-| Reactive/apparent energy labeled with power units; delayed power advertised live statistics | Incorrect units and time attribution. | Preserve kVAh/kvarh; no auto-recorded measurement statistics on delayed power snapshots. |
-| Offset-free timestamps treated as UTC | Daily samples shifted by Cyprus UTC offset. | Interpret naive timestamps as Asia/Nicosia; preserve explicit offsets; tests cover winter/summer. This assumption follows upstream source comments and still requires comparison with a live export. |
-| Duplicate/unordered/NaN/infinite readings accepted | Recorder errors or polluted statistics. | Sort, collapse observations to one per UTC hour, and reject nonfinite/negative cumulative values. |
-| SMB helper put password in process arguments and masked failures | Local process listings exposed the password; upload failure could be reported as success. | Owner-only temporary authentication file, cleanup trap, newline rejection, and retained exit status. The optional `.env` remains a trusted local shell file and must never be loaded from an untrusted source. |
-| Mutable GitHub Action references and no test/security workflow | Unreviewed action changes and regressions could be missed. | Immutable action revisions, contents-read permission, regression tests, exact-version smoke check, source/dependency scanners and formatting checks. |
+| Upstream model parsing could raise unsanitized errors | A malformed authenticated portal response could fail outside normal error handling or expose parser input in an error. No unauthenticated remote exploit demonstrated. | Client boundary sanitizes common parser failures; coordinator handles malformed model errors without response detail. |
+| JSON/token validation incomplete | Unexpected server responses could contain non-standard constants, deeply nested containers or invalid authorization-header characters. | Reject NaN/Infinity constants and structures deeper than 32 containers; bound token length and reject whitespace/control/non-ASCII token characters. Existing 2 MiB response cap retained. |
+| Paths built from portal identifiers were unrestricted | A malformed service-point identifier could address another route on the same trusted origin. | Full-match allowlist of supported API paths. Does not claim to mitigate a compromised HA administrator or server. |
+| Deadlines started after lock acquisition | A poll/import waiting behind another operation could exceed its documented deadline. | Timeout now covers the operation-lock wait; cancellation/timeout regression tests verify cleanup. |
+| Net-history pairing retained full lifetime readings | The continuous-grid change accumulated import/export observations until a meter's full history finished. | Pair and enqueue within each 14-day window; retain boundary samples only as needed for matching. |
+| History bound only applied when install date was missing | Implausibly old/future dates could trigger excessive requests. | Clamp every import to the last 3,650 days and the present. |
+| SMB process success did not prove individual commands succeeded | Interactive smbclient can exit zero after a failed upload, causing false success. | Detect command-level NT_STATUS failures, tolerate only existing-directory creation, clean temporary files, remove the password from the child environment and disable shell tracing. Tested with a fake smbclient. |
+| Documentation could cause incorrect interpretation | Fixed delay claims, old polling defaults and adding tariff registers alongside total energy were misleading. | Rewrite installation/data/troubleshooting docs and English/Russian options text; explain per-channel freshness, duplicate-energy risks and solar limitations. |
+
+Additional cleanup removes redundant conversions/exception blocks, compares latest readings in UTC, omits nonfinite cumulative attributes, names net-grid channels clearly, and assigns the fork's code-owner metadata to its maintainer.
+
+## Existing protections retained
+
+- Official HTTPS portal only, normal TLS verification, no redirects or arbitrary configured origins.
+- Serial HTTP requests, 30-second request deadline, 2 MiB decoded response retention cap, bounded one-time token refresh and 60-second–24-hour rate-limit cooldown.
+- Admin-only history action, no overlapping imports per account, and polling/import serialization.
+- HA reauthentication without deleting entities/statistics; credential changes reload the entry.
+- Generic normal error messages and identifier-free routine import logs.
+- External statistics instead of auto-recorded delayed cumulative sensor totals; reject nonfinite/negative cumulative values and normalize duplicate hours.
+- Pinned action revisions, read-only CI permissions; checkout credentials are no longer persisted and jobs have deadlines.
 
 ## Validation evidence
 
-- **62 tests pass** on HA 2026.10.4 / Python 3.14 using pytest-homeassistant-custom-component 0.13.375. Tests cover hostile origins/redirects, bounded bodies/retries, credential redaction, rate limiting, simultaneous requests, admin authorization, duplicate imports, lock cleanup, reauthentication, units, timezone handling, and normal entity lifecycle.
-- **HA 2026.11.1 smoke check passes** against the real core in a disposable configuration and SQLite database: config flow, sensor setup, actual statistics rows, repeated-import idempotency, credential update/reload, unload and service removal. The portal is synthetic; no production connection is made. The old pytest helper cannot run on 2026.11.1 because its internal logger imports changed; this is why the exact-version test is separate.
-- **Bandit: zero reported findings** in the final integration source. One documented B105 suppression covers the literal config key `password`, not a credential.
-- **pip-audit: no known vulnerabilities** for the ten resolved runtime dependency versions listed in `audit/runtime-resolved.txt`, as queried on the review date. This does not audit all packages in the user's HA installation, the operating system, or future dependency resolutions.
-- Ruff code/import checks and formatting, shell syntax, and whitespace checks pass. Raw machine-readable scanner reports and concise test evidence are in `audit/`.
+| Check | Result | Evidence |
+|---|---|---|
+| Regression suite, Python 3.14 / HA 2026.10.4 | **88 passed** | `audit/tests-ha-2026.10.4.txt` |
+| Actual HA 2026.11.1 core + temporary SQLite, synthetic portal | **Passed**: setup, entities, stored statistics, repeated-import idempotency, reauth/reload, unload/service cleanup | `audit/smoke-ha-2026.11.1.json` |
+| Bandit runtime source scan | **0 findings** | `audit/bandit.json` |
+| pip-audit historical runtime snapshot | **0 known advisories**, 10 packages | `audit/dependency-audit.json`, `audit/runtime-resolved.txt` |
+| pip-audit fresh resolution of manifest dependency | **0 known advisories**, 10 packages | `audit/dependency-audit-fresh.json` |
+| Targeted credential-pattern scan | **0 matches** in 115 locally reachable historical blobs and current non-ignored files | `audit/secret-pattern-check.json` |
+| Ruff checks/format, shell syntax, whitespace | Passed locally | Commands in `docs/DEVELOPMENT.md` |
 
-## Performance interpretation
+The credential-pattern scan covers private-key headers, GitHub tokens, AWS access-key IDs, JWT-shaped tokens and credential-bearing HTTP URLs. It does not detect every possible password or certify an entire repository as secret-free. Test secrets and account fixtures are synthetic. Dependency scans cover the integration's resolved dependency tree, not the entire production HA installation or OS. Bandit's B105 suppression is only for the literal configuration key `password`.
 
-The improvements bound work rather than claim an unmeasured speedup. A synthetic import test verifies that each request covers at most 14 days, each response is imported before the next batch, and duplicate boundary readings are not counted twice. Previously the library accumulated all chunks before returning them to the importer. Request count is not reduced: it remains sequential and respectful of portal limits. Six-hour polling stays the default.
+CI repeats tests, source checks, snapshot and fresh dependency audits, and HACS/hassfest validation. A local result does not assert a remote workflow has passed; check the PR's current checks.
 
-The response byte cap limits what this adapter retains; it is not a complete defense against every HTTP decompression or parser resource attack. Recorder queueing and Home Assistant itself also consume memory. There is no real-account latency, CPU or memory benchmark yet.
+## Remaining limitations
 
-## Remaining limits before relying on the data
+1. HA stores credentials in normal config-entry storage; there is no additional vault. Protect administrative access and backups. A custom integration has HA Core privileges.
+2. The DSO API is undocumented. HTTP parsing/decompression and JSON decoding allocate memory before some validations; the limits are not a process-wide memory guarantee. No production load/latency benchmark was performed.
+3. History imports enqueue data asynchronously. Partial rows remain after cancellation, retries restart from the beginning, and a long account can still exceed 10 minutes. Inactive service points are skipped.
+4. Naive timestamps are interpreted as Cyprus time. Ambiguous autumn DST times, cumulative counter resets and replacement-meter stitching remain unsupported. Verify billing calculations against the portal and your contract.
+5. Meter-wide freshness follows the newest channel; cumulative export can be older than load-profile data. The integration does not provide real-time solar control or inverter generation.
+6. SMB deployment copies files without backup, automatic restart, hash verification or obsolete-file deletion. `.env` is trusted executable shell configuration; use it only from a trusted checkout. Command-error detection is not a transactional upload guarantee.
+7. The pinned client's internal transport methods are overridden. Review upstream changes and rerun validation before changing the dependency. Browser sessions, HA integrations outside this repo and external dashboards were outside this audit.
 
-1. Validate live login, channel mapping, data delay and at least one bill/export comparison after installation. The portal API is undocumented and may change.
-2. Validate naive timestamp semantics against an actual portal export, especially around DST. Ambiguous offset-free timestamps cannot distinguish the repeated autumn hour. Daily cumulative counters do not provide true hourly consumption; interval history remains outside this fork's scope.
-3. Cumulative reset/rollover correction and stitching totals across replacement meters are not implemented. Distinct meters remain separate devices/statistic series.
-4. A very long import can exceed the 10-minute deadline. Already queued rows remain; rerunning is idempotent but currently starts from the original date rather than a persisted checkpoint. Database enqueue success is not a transactional guarantee that every row was durably committed.
-5. HA stores integration credentials in its normal config-entry storage. Protect HA access and backups; this fork does not provide an additional secret vault. Administrator/system-triggered imports are allowed, non-admin user-triggered imports are denied.
-6. The client adapter deliberately overrides transport internals of pinned library 0.2.1. Review and rerun tests before changing that dependency. Updating from upstream would overwrite fork-specific fixes.
-
-## Reproduce
-
-See README test commands and `.github/workflows/validate.yml`. `scripts/smoke_ha.py` uses temporary storage and a synthetic portal. Review the entire fork diff before installing; keep upstream LICENSE attribution intact.
+See [SECURITY.md](SECURITY.md) for disclosure guidance and [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for reproducible checks and rollback.

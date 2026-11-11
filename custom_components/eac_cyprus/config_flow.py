@@ -167,7 +167,7 @@ _INTERVAL_LABELS: dict[int, str] = {
     30: "30 minutes",
     60: "1 hour",
     180: "3 hours",
-    360: "6 hours (recommended)",
+    360: "6 hours",
     720: "12 hours",
     1440: "24 hours",
 }
@@ -202,10 +202,6 @@ class EacOptionsFlow(OptionsFlow):
                 CONF_HISTORY_DAYS: history,
                 CONF_STALE_THRESHOLD_DAYS: stale,
             }
-            # The select selector hands back strings; coerce to int once.
-            user_input[CONF_SCAN_INTERVAL_MINUTES] = int(
-                user_input[CONF_SCAN_INTERVAL_MINUTES]
-            )
             return self.async_create_entry(title="", data=user_input)
 
         current = self.config_entry.options

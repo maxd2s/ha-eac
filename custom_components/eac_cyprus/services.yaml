@@ -1,6 +1,7 @@
 import_full_history:
   name: Import full history
   description: >-
-    Backfill the complete available meter history from the EAC portal into
-    long-term statistics, for every meter on the account (active and retired).
-    One-time operation; safe to re-run.
+    Backfill available cumulative kWh meter history (up to 3650 days) into
+    long-term statistics for active service points and their active/retired meters.
+    Requires administrator access; bounded to 10 minutes per account.
+    Safe to re-run; interrupted imports restart from the beginning.

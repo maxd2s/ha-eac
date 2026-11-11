@@ -147,3 +147,93 @@ async def test_invalid_chunk_size_cannot_loop_forever(days):
     with pytest.raises(ValueError):
         await client.get_readings("1", None, None, chunk_days=days)
     session.request.assert_not_called()
+
+
+@pytest.mark.parametrize("body", [b'{"jwt": NaN}', b"[" * 2000 + b"0" + b"]" * 2000])
+async def test_nonstandard_or_deep_json_fails_safely(body):
+    client, _ = client_with(Response(200, body=body))
+    with pytest.raises(EacApiError, match="Invalid portal JSON"):
+        await client.login()
+
+
+@pytest.mark.parametrize(
+    "token", ["bad\r\nInjected: value", "bad token", "bad\x00token", "秘密"]
+)
+async def test_invalid_token_cannot_be_forwarded_as_header(token):
+    client, session = client_with(Response(200, {"jwt": token}))
+    with pytest.raises(EacAuthError, match="Invalid portal login"):
+        await client.get_user_details()
+    assert session.request.call_count == 1
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/portal/servicePoints/../login",
+        "/api/portal/servicePoints/x?secret=1",
+        "//evil.example",
+        "/api/admin",
+    ],
+)
+async def test_nonallowlisted_endpoint_rejected_before_network(path):
+    client, session = client_with()
+    with pytest.raises(EacApiError, match="Unsupported portal endpoint"):
+        await client._exchange("GET", path)
+    session.request.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "method,args,data",
+    [
+        ("get_user_details", (), None),
+        ("list_service_points", (), ["PRIVATE_ACCOUNT_DATA"]),
+        ("get_meter_configs", ("123",), [{"installDate": "PRIVATE_ACCOUNT_DATA"}]),
+    ],
+)
+async def test_upstream_parse_errors_are_redacted(method, args, data):
+    client, _ = client_with(Response(200, {"jwt": "TOKEN"}), Response(200, data))
+    with pytest.raises(EacApiError) as error:
+        await getattr(client, method)(*args)
+    assert "PRIVATE_ACCOUNT_DATA" not in str(error.value)
+    assert error.value.__suppress_context__
+
+
+async def test_bad_reading_number_is_redacted():
+    from datetime import UTC, datetime, timedelta
+
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    client, _ = client_with(
+        Response(200, {"jwt": "TOKEN"}),
+        Response(
+            200,
+            [
+                {
+                    "id": "123",
+                    "readings": [{"dt": "2026-01-01", "value": "PRIVATE_ACCOUNT_DATA"}],
+                }
+            ],
+        ),
+    )
+    with pytest.raises(EacApiError, match="Invalid portal readings") as error:
+        await client.get_readings("123", start, start + timedelta(days=1))
+    assert "PRIVATE_ACCOUNT_DATA" not in str(error.value)
+
+
+async def test_cancelled_request_releases_transport_lock():
+    client, session = client_with()
+    entered = asyncio.Event()
+    never = asyncio.Event()
+
+    async def exchange(*args, **kwargs):
+        entered.set()
+        await never.wait()
+
+    with patch.object(client, "_exchange", side_effect=exchange):
+        task = asyncio.create_task(client.login())
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert not client._request_lock.locked()
+    session.request.side_effect = [Response(200, {"jwt": "TOKEN"})]
+    await client.login()

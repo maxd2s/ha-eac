@@ -1,7 +1,7 @@
 """Binary sensor platform: per-meter data-staleness diagnostic.
 
-The portal publishes with a 2-3 day lag, so "no fresh reading" is only a real
-problem once it exceeds a configurable threshold (``stale_threshold_days``).
+Publication delays vary by channel. Flag when the newest reading exceeds
+the configurable threshold (``stale_threshold_days``).
 """
 
 from __future__ import annotations

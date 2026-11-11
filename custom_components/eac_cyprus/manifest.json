@@ -2,7 +2,7 @@
   "domain": "eac_cyprus",
   "name": "EAC Distribution Web Portal",
   "codeowners": [
-    "@SantaFox"
+    "@maxd2s"
   ],
   "config_flow": true,
   "dependencies": [
@@ -15,5 +15,5 @@
   "requirements": [
     "eac-dso-portal==0.2.1"
   ],
-  "version": "0.4.0"
+  "version": "0.4.2"
 }

@@ -53,3 +53,44 @@ async def test_duplicate_history_rejected_and_lock_released(hass, patch_eac_clie
         await task
     assert not coordinator.history_import_running
     assert not coordinator.operation_lock.locked()
+
+
+async def test_history_deadline_includes_lock_wait(hass, patch_eac_client):
+    entry = await _setup_integration(hass, patch_eac_client)
+    coordinator = hass.data["eac_cyprus"][entry.entry_id]
+    timeout = asyncio.timeout
+    await coordinator.operation_lock.acquire()
+    try:
+        with (
+            patch(
+                "custom_components.eac_cyprus.asyncio.timeout",
+                side_effect=lambda _: timeout(0.01),
+            ),
+            patch("custom_components.eac_cyprus.async_import_full_history") as importer,
+        ):
+            with pytest.raises(HomeAssistantError, match="interrupted"):
+                await hass.services.async_call(
+                    "eac_cyprus", "import_full_history", {}, blocking=True
+                )
+        importer.assert_not_called()
+        assert not coordinator.history_import_running
+    finally:
+        coordinator.operation_lock.release()
+
+
+async def test_poll_deadline_includes_lock_wait(hass, patch_eac_client):
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    entry = await _setup_integration(hass, patch_eac_client)
+    coordinator = hass.data["eac_cyprus"][entry.entry_id]
+    timeout = asyncio.timeout
+    await coordinator.operation_lock.acquire()
+    try:
+        with patch(
+            "custom_components.eac_cyprus.coordinator.asyncio.timeout",
+            side_effect=lambda _: timeout(0.01),
+        ):
+            with pytest.raises(UpdateFailed, match="retrying"):
+                await coordinator._async_update_data()
+    finally:
+        coordinator.operation_lock.release()

@@ -1,111 +1,121 @@
-# EAC Cyprus — Home Assistant integration
+# EAC Cyprus for Home Assistant
 
-This fork of [SantaFox/ha-eac](https://github.com/SantaFox/ha-eac) adds security hardening and Home Assistant 2026.10/11 compatibility. See [the security review](SECURITY_REVIEW.md) for scope, evidence, and remaining limitations. No live account validation has been performed for this revision.
+Read your Cyprus EAC DSO meter account in Home Assistant, with delayed import/export history for the Energy Dashboard. This is an unofficial custom integration, not an EAC product.
 
-Home Assistant integration for the EAC (Electricity Authority of Cyprus) Distribution Web Portal at `meterreading-dso.eac.com.cy`.
+This fork of [SantaFox/ha-eac](https://github.com/SantaFox/ha-eac) adds constrained HTTPS transport, reauthentication, bounded history imports, and continuous statistics across channel changes on the same meter. It uses the pinned [`eac-dso-portal`](https://github.com/SantaFox/eac-dso-portal) parser. Upstream attribution and the MIT license are retained.
 
-It pulls your electricity-meter readings into Home Assistant — the full history into the Energy Dashboard, plus live "latest known value" sensors and per-meter diagnostics. Built on the [`eac-dso-portal`](https://github.com/SantaFox/eac-dso-portal) Python client (also on [PyPI](https://pypi.org/project/eac-dso-portal/)).
+## Requirements
 
-## What you get
+- Home Assistant Core **2026.10.4 or newer**; see [validation evidence](SECURITY_REVIEW.md) for versions actually tested.
+- An account at <https://meterreading-dso.eac.com.cy> with accessible meter data. This is the DSO portal account, which may differ from your EAC billing login.
+- Outbound HTTPS access to that portal and Home Assistant's Recorder integration.
+- No meter reader hardware, local MQTT broker, browser automation, or HACS dependency is required.
 
-**One device per meter.** Each physical meter on your account is its own HA device, named by its serial and parented to the service point (the permanent supply contract at your address). When the DSO swaps the meter, the old device stays — with its final reading and full history — and the new meter appears automatically.
-
-Per meter you get:
-
-- **Per-channel "last value" sensors** — the most recent reading Home Assistant has for each channel:
-  - `Energy total (24h)`, `Energy peak/off-peak tariff`, `Energy exported` — cumulative kWh (glance value; the *history* lives in statistics, see below).
-  - `Power import/export (30-min average)` — the 30-minute load profile re-projected to average power (kW).
-  - Reactive / apparent energy channels — created but disabled by default.
-- **Diagnostics** — `Data measured at` (when the reading was taken), `Data received at` (when HA fetched it), `Data lag` (the age of the newest reading), and a `Data stale` problem sensor.
-
-## "Now" vs "history": two separate things
-
-The portal publishes with a **2–3 day lag**. Home Assistant's live sensor state is, by design, always "the value right now" — you can't backdate it — so a cumulative sensor showing a 3-day-old reading as "now" is a poor fit, and letting Home Assistant auto-compute long-term statistics off it would misdate your consumption. (This is exactly why Home Assistant's own utility integrations, like `opower`, publish delayed data as statistics rather than as a live sensor.)
-
-So the integration splits the picture in two:
-
-- **Sensors answer "what does HA know right now"** — the latest reading and the diagnostics above. Good for glance cards and automations. Cumulative kWh sensors deliberately carry **no `state_class`**, so Home Assistant does not auto-record misdated statistics for them.
-- **External statistics answer "what actually happened, and when"** — the correct-dated long-term history, written straight to the statistics engine with the real reading dates. This is what the **Energy Dashboard** uses.
-
-### Where to find the history
-
-The statistics are named from the meter serial, e.g. `1281890 Energy total (24h)`. They are not entities (that is inherent to delayed-data statistics), so you view them via:
-
-- **Energy Dashboard** → *Add consumption* → pick `<serial> Energy total (24h)` (and the two tariff series for a two-tariff plan, or `<serial> Energy exported` under Grid → Return to grid if you export energy).
-- A **Statistics graph** card on any dashboard → pick the same series.
-- **Developer Tools → Statistics** → lists them all.
-
-## Load the full history
-
-Regular polling only keeps a rolling window. To backfill everything the portal has — the current meter back to its install date, **and** any retired meters (e.g. an old meter's years of readings) — run the action once:
-
-**Developer Tools → Actions → `eac_cyprus.import_full_history` → Run.**
-
-It returns a per-channel summary and posts a notification after enqueueing the results. Administrator access is required. Imports use sequential 14-day windows, with one import at a time per account and a 10-minute deadline. An interrupted import reports an error; existing rows remain and rerunning is idempotent. You are prompted to run it once on first setup.
-
-## Configuration
-
-Settings → Devices & Services → the EAC tile → three-dot menu → **Configure**:
-
-- **Polling interval** — 30 min … 24 h (default 6 h). The portal updates daily, so more often rarely helps.
-- **History window (days)** — how far back each poll fetches (default 14). This is the rolling window; deep history comes from the import action above.
-- **Data-stale threshold (days)** — how long without a fresh reading before `Data stale` flags (default 4, i.e. a bit beyond the normal 2–3 day lag).
-
-## Install
+## Installation
 
 ### HACS
 
-Add this repository as a **Custom repository** (HACS → three-dot menu → Custom repositories → `https://github.com/maxd2s/ha-eac`, category *Integration*), then install "EAC Distribution Web Portal" and restart Home Assistant.
+Add `https://github.com/maxd2s/ha-eac` as a custom repository of type **Integration**, install **EAC Distribution Web Portal**, and restart Home Assistant. HACS installs the repository's published/default revision: changes on an unmerged development branch are not automatically included.
 
-### Manual
+### Manual or development branch
 
-1. Copy `custom_components/eac_cyprus/` into your HA config's `custom_components/` folder (e.g. via the Samba add-on at `\\<HA-IP>\config\custom_components\`).
-2. Restart Home Assistant.
-3. Settings → Devices & Services → Add Integration → search **EAC Distribution Web Portal**.
-4. Enter the email and password you use at `meterreading-dso.eac.com.cy`.
+1. Download or check out the desired release/branch of this repository.
+2. Copy only `custom_components/eac_cyprus/` to `<HA config>/custom_components/eac_cyprus/`.
+3. Restart Home Assistant.
+4. Open **Settings → Devices & services → Add integration → EAC Distribution Web Portal**.
+5. Enter your DSO email and password in Home Assistant. Do not put them in source code, dashboard YAML, or GitHub issues.
 
-## Design notes
+Back up Home Assistant before upgrading. See [development and deployment](docs/DEVELOPMENT.md) for verification and rollback.
 
-**Device = meter.** A service point (12-digit `spId`) is the permanent supply contract at an address; meters are the hardware and get swapped over time. Modelling each meter as its own device (parented to the service point via `via_device`) means a retired meter keeps its own history and final reading instead of vanishing or getting tangled with the replacement.
+## What appears in Home Assistant
 
-**Meter swaps.** The new meter's device and channels appear on the next refresh; the retired meter's sensors go unavailable but its statistics stay frozen and intact. Each meter's statistics are correct on their own. What is **not** yet stitched automatically is a single continuous lifetime total *spanning* a swap — the old and new meters expose different channels — that's on the roadmap.
+Each service point is a parent device; each physical meter is a child device. Meters and channels discovered in subsequent polls are added automatically. Retired meters retain statistics and, where available, their final snapshot.
 
-**No `state_class` on cumulative sensors.** With a 2–3 day publish lag, Home Assistant's auto-recorder would compute statistics off the "latest known value" and misdate consumption. Instead there is no `state_class` (nothing is auto-computed) and the real long-term series is written as external statistics with correct dates — the same approach Home Assistant core uses for delayed utility data.
+| Sensor | Meaning |
+|---|---|
+| Grid energy imported / Energy total (24h) | Cumulative electricity drawn from the grid, kWh |
+| Grid energy exported / Energy exported | Cumulative electricity sent to the grid, kWh |
+| Energy peak / off-peak tariff | Cumulative tariff registers; these are portions of import, not extra consumption |
+| Power import/export (30-min average) | Latest available interval energy divided by half an hour, in kW; not instantaneous power |
+| Data measured at | Newest measurement timestamp across the meter's channels |
+| Data received at | Snapshot fetch time, including polls that return unchanged readings |
+| Data lag | Age of the newest measurement at fetch time; updated when polling runs |
+| Data stale | Whether that newest measurement exceeds your configured age threshold |
 
-## Development
+Reactive/apparent energy and unrecognised channels are disabled by default. Available channels depend on the meter and portal configuration.
 
-Depends on the [`eac-dso-portal`](https://github.com/SantaFox/eac-dso-portal) library — bug reports about HTTP/parsing belong there; HA-side issues (sensors, config flow, devices, statistics) belong here. `scripts/deploy_smb.sh` pushes the integration to a Samba share for local testing (connection details in a gitignored `.env`).
+**Export is not solar generation.** Solar used directly in your home does not cross the grid meter. Total solar generation and total household consumption require inverter or additional meter data.
+
+## How delayed data works
+
+The DSO publishes channels on different schedules. Half-hour load profiles may be several hours behind; cumulative registers may only update daily or later. There is no guaranteed universal 2–3 day delay. Polling more frequently cannot make the DSO publish sooner.
+
+The meter-wide freshness sensors describe the **newest channel**, so they do not establish the freshness of every export/import register. Inspect each channel's `measured_at` attribute for its own measurement timestamp. A recent HA `last_updated` timestamp only says when HA received or changed the entity state.
+
+Cumulative sensors intentionally have **no `state_class`**. Historical energy is stored as external statistics at measurement times, avoiding the mistake of recording old consumption as usage at the time HA fetched it.
+
+## Configure the Energy Dashboard
+
+Under **Settings → Dashboards → Energy**, select these external statistics:
+
+- **Grid consumption:** `<meter serial> Grid import`.
+- **Return to grid:** `<meter serial> Grid export`.
+
+For custom charts, `<meter serial> Net grid energy` is import minus export: positive changes mean net imports, negative changes mean net exports.
+
+**Do not add peak/off-peak registers alongside total import**, and do not add both an original per-channel series and its continuous grid equivalent. That counts the same energy twice. Net energy is for balance charts, not the Energy Dashboard's consumption input.
+
+The continuous statistic IDs are:
+
+```text
+eac_cyprus:<service-point>_meter_<serial>_import
+eac_cyprus:<service-point>_meter_<serial>_export
+eac_cyprus:<service-point>_meter_<serial>_net
+```
+
+The serial is normalized for HA statistic IDs. These are statistics, not sensor entity IDs. Find them in **Developer Tools → Statistics** or a Statistics graph card. If a grid series is unavailable, inspect the channel mapping in [data semantics](docs/DATA.md); never guess that an unknown register means total import.
+
+## Import older history
+
+Regular polling retrieves a rolling window. For older data, an administrator can run **Developer Tools → Actions → `eac_cyprus.import_full_history`** once.
+
+The action processes active service points and their available active/retired meters. It imports cumulative kWh channels in 14-day windows, bounded to the last **3,650 days** and a **10-minute deadline per account**, including lock wait. It does not import historical half-hour power profiles.
+
+A summary means rows were queued for Recorder, not that a database transaction was fully committed. If interrupted, imported rows remain. Rerunning replaces matching statistic rows rather than duplicating them, but starts again from the beginning; there is no saved resume cursor.
+
+## Options
+
+Open the integration's **Configure** option:
+
+| Setting | Default | Allowed values |
+|---|---:|---|
+| Poll interval | 30 minutes | 30 min, 1 h, 3 h, 6 h, 12 h, 24 h |
+| Rolling history | 14 days | 1–60 days |
+| Stale threshold | 4 days | 1–30 days |
+
+Longer polling intervals reduce portal traffic. Requests are sequential, reuse the authenticated session, and respect rate-limit cooldowns. The 4-day stale threshold is conservative, not a delivery-time guarantee.
+
+## Troubleshooting
+
+- **Authentication required:** use HA's reauthentication prompt. Updating the password preserves your entry and statistic IDs.
+- **Cannot connect / temporarily unavailable:** check portal availability and network access; rate limits pause requests. Do not repeatedly retry or run history imports.
+- **Export unchanged today:** inspect the export sensor's `measured_at`; daily cumulative values may lag behind the load-profile channel.
+- **Daily spike after missing days:** the next register difference can cover the whole gap. The integration does not invent missing daily values.
+- **Unexpected totals after a meter reset:** reset/rollover compensation is not implemented. Compare the raw registers and see [data limitations](docs/DATA.md).
+- **No history after installation:** wait for a successful refresh, then run the history action and allow Recorder to finish processing.
+
+## Security and contributing
+
+Credentials are stored in HA's standard config-entry storage. Treat HA access and backups as sensitive. The runtime contacts only the official HTTPS DSO origin; redirects and custom origins are rejected. This is a read-only portal integration and does not control the meter or change your electricity contract.
+
+- [Security policy](SECURITY.md): boundaries, reporting and secret handling.
+- [Security review](SECURITY_REVIEW.md): findings, test evidence and remaining risks.
+- [Data semantics](docs/DATA.md): channels, dates, net energy and limitations.
+- [Development](docs/DEVELOPMENT.md): reproducible tests, CI and deployment.
+- [Changelog](CHANGELOG.md).
+
+Report fork transport/integration issues here; parser changes may also require coordination with the upstream library. Include versions and a redacted error description, never passwords, JWTs, account details, or raw portal exports.
 
 ## License
 
-MIT
-
-
-## Fork transport and lifecycle changes
-
-- Credentials go only to `https://meterreading-dso.eac.com.cy`; custom origins and redirects are refused. TLS certificate verification stays enabled.
-- Each request has a 30-second total deadline and a 2 MiB decoded response limit. A rejected token is refreshed at most once per request; concurrent requests share one login.
-- HTTP 429 creates a local cooldown (at least 60 seconds, `Retry-After` respected up to 24 hours). No busy retry loop or parallel portal requests.
-- Error responses and credentials are excluded from exception messages. Portal/account identifiers were removed from normal import logs.
-- Invalid credentials open HA's reauthentication flow. Credential changes reload the entry; polling changes update the coordinator without a full HA restart.
-- Statistics declare `mean_type` and `unit_class`. Unsorted/duplicate-hour readings are normalized; nonfinite or negative cumulative readings are rejected.
-- Offset-free timestamps are interpreted as Cyprus civil time, including DST; explicit offsets are preserved. This follows the upstream code's description and needs verification against a live portal export before relying on time-of-day totals.
-- Delayed power snapshots do not advertise live measurement statistics. Unknown channels no longer crash setup; apparent/reactive energy keeps energy units.
-
-## Tests
-
-Python 3.14, isolated environment:
-
-```sh
-python -m pip install -r requirements-test.txt
-python scripts/run_tests.py -q
-```
-
-The current HA test-helper release pins HA 2026.10.4. A separate smoke check uses the actual HA 2026.11.1 core, a disposable configuration and SQLite database, and a synthetic portal client:
-
-```sh
-python -m pip install homeassistant==2026.11.1
-python scripts/smoke_ha.py
-```
-
-The smoke check verifies config flow, entities, actual statistic storage, repeat-import idempotency, reauthentication/reload, and service cleanup. It never connects to a production Home Assistant or uses real DSO credentials. GitHub Actions runs both paths with read-only repository permissions and pinned action revisions.
+[MIT](LICENSE).

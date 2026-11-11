@@ -16,16 +16,16 @@ CONF_STALE_THRESHOLD_DAYS = "stale_threshold_days"
 
 DEFAULT_BASE_URL = "https://meterreading-dso.eac.com.cy"
 
-# 6h is plenty: the EAC portal updates daily and 30-min profile data lags by
-# hours, so polling more often gains nothing in practice.
-DEFAULT_SCAN_INTERVAL_MINUTES = 360
+# Observe portal publication timing with half-hourly polling initially.
+# This controls fetch frequency, not the provider's measurement/publication lag.
+DEFAULT_SCAN_INTERVAL_MINUTES = 30
 
 # Pulling a few days of history on every refresh lets us recover gracefully
 # from missed reports (e.g. the integration was down or network blipped).
 DEFAULT_HISTORY_DAYS = 14
 
-# The portal publishes with a 2-3 day lag, so "no fresh data" only becomes
-# suspicious a bit beyond that. Marks binary_sensor.*_data_stale on.
+# Conservative default; publication delays vary by account and channel.
+# This is an alert threshold, not a promise about provider delivery time.
 DEFAULT_STALE_THRESHOLD_DAYS = 4
 
 # Values offered in the options-flow dropdown (minutes).
@@ -40,6 +40,8 @@ CHANNEL_LABELS: dict[str, str] = {
     "S-KWH-NORMAL": "Energy peak tariff",
     "S-KWH-OFFPEAK": "Energy off-peak tariff",
     "S-KWH-EXP": "Energy exported",
+    "S-KWH-NET-IMP-MMTR": "Grid energy imported",
+    "S-KWH-NET-EXP-MMTR": "Grid energy exported",
     "KWH-30MIN-LP-IMP": "Power import (30-min average)",
     "KWH-30MIN-LP-EXP": "Power export (30-min average)",
     "S-KVAH-24H": "Apparent energy",

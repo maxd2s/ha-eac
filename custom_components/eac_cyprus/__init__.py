@@ -70,7 +70,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
                 raise HomeAssistantError("An EAC history import is already running")
             coordinator.history_import_running = True
             try:
-                async with coordinator.operation_lock, asyncio.timeout(600):
+                async with asyncio.timeout(600), coordinator.operation_lock:
                     details.extend(
                         await async_import_full_history(hass, coordinator.client)
                     )
@@ -116,7 +116,7 @@ def _async_offer_history_import(hass: HomeAssistant, entry: ConfigEntry) -> None
         "To load your complete meter history into the Energy Dashboard, run the "
         "**EAC: Import full history** action once (Developer Tools -> Actions -> "
         "`eac_cyprus.import_full_history`). Regular polling only keeps a rolling "
-        "window; this backfills everything the portal has, for every meter.",
+        "window; this backfills available cumulative history, up to ten years.",
         title="EAC Cyprus: import full history",
         notification_id=f"{DOMAIN}_{entry.entry_id}_history",
     )

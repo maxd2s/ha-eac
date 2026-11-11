@@ -32,7 +32,7 @@
     "step": {
       "init": {
         "title": "EAC settings",
-        "description": "The portal normally publishes delayed data. Six-hour polling is sufficient. Use the import action for older history.",
+        "description": "The portal publishes delayed readings on different schedules. Polling defaults to 30 minutes; increase it to reduce traffic. Use the import action for older cumulative history.",
         "data": {
           "scan_interval_minutes": "Polling interval",
           "history_days": "History window (days fetched on each refresh)",
