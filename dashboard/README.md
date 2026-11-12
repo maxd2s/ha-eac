@@ -39,8 +39,13 @@ never use this fallback. Net
 register totals use the matched register series, not unmatched directional
 sums. Today's net uses paired intervals; independent import/export totals may
 cover different intervals. Missing values show dashes and break chart lines.
-The seven-day export average requires all seven daily changes; gaps in upstream
-registers can accumulate on a later date. Export is not total solar generation.
+The seven-day export average prefers all seven daily register changes. If those
+are unavailable, it uses a complete seven-day set of half-hour exports and labels
+the result provisional. It never mixes register and interval totals, divides by
+fewer days, or treats missing samples as zero. Each day must have every expected
+interval, including 46/50-interval daylight-saving days. If neither source is
+complete, it shows a waiting message. Gaps in upstream registers can accumulate
+on a later date. Export is not total solar generation.
 
 **Performance/access:** No third-party libraries or external requests. The page
 reads the permission-scoped profile API and HA Recorder, with up to 12 cached

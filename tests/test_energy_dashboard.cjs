@@ -71,3 +71,30 @@ test('past-day fallback preserves gaps and never enters month or week totals',()
  }
  assert.equal(selection({points:[]},range,[]).totals.imported,null);
 });
+const averageSummary=get('eacAverageSummary');
+function fullExportWeek(today){
+ const now=Date.parse(today+'T12:00:00+03:00'),range=period('week','',zone,now),points=[];
+ for(let t=range.start+1800000;t<=range.end;t+=1800000)points.push([t,null,.25]);
+ return {now,range,profile:{time_zone:zone,points}};
+}
+test('average uses one consistent complete interval week when a daily register is pending',()=>{
+ const {now,range,profile}=fullExportWeek('2026-04-20');
+ const result={[ids.export]:Array.from({length:6},(_,i)=>({start:range.start+i*86400000,change:999}))};
+ const r=averageSummary(result,ids.export,profile,now);assert.equal(r.value,12);assert.match(r.label,/provisional/);
+ result[ids.export].push({start:range.start+6*86400000,change:999});
+ assert.equal(averageSummary(result,ids.export,profile,now).value,999);
+});
+test('average requires every interval, accepts observed zeros, and ignores today',()=>{
+ const {now,range,profile}=fullExportWeek('2026-04-20');
+ profile.points.forEach(p=>p[2]=0);profile.points.push([range.end+1800000,null,999]);
+ assert.equal(averageSummary({},ids.export,profile,now).value,0);
+ profile.points.splice(2,1);profile.points.push([...profile.points[0]]);
+ const r=averageSummary({},ids.export,profile,now);assert.equal(r.value,null);assert.match(r.label,/6\/7/);
+});
+test('average completeness follows spring and autumn DST day lengths',()=>{
+ for(const [today,count] of [['2026-03-30',334],['2026-10-26',338]]){
+  const {now,profile}=fullExportWeek(today);assert.equal(profile.points.length,count);
+  assert.equal(averageSummary({},ids.export,profile,now).value,count*.25/7);
+  profile.points.pop();assert.equal(averageSummary({},ids.export,profile,now).value,null);
+ }
+});

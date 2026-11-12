@@ -68,6 +68,22 @@ function eacExportAverage(result, id, zone, now=Date.now()) {
   for(const row of result[id]||[]) {const key=eacDay(row.start,zone);if(keys.includes(key)&&Number.isFinite(row.change)&&row.change>=0)values.set(key,row.change);}
   return values.size===7?[...values.values()].reduce((a,b)=>a+b,0)/7:null;
 }
+function eacAverageSummary(result, id, profile, now=Date.now()) {
+  const zone=profile.time_zone||'Asia/Nicosia';
+  const registered=eacExportAverage(result,id,zone,now);
+  if(Number.isFinite(registered))return {value:registered,label:'Last 7 completed days · registers'};
+  const today=eacDay(now,zone);
+  const points=new Map((profile.points||[]).filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[2])&&p[2]>=0).map(p=>[p[0],p[2]]));
+  let complete=0,sum=0;
+  for(let i=1;i<=7;i++){
+    const day=eacShift(today,-i),start=eacMidnight(day,zone),end=eacMidnight(eacShift(day,1),zone);
+    let valid=true,total=0;
+    for(let t=start+1800000;t<=end;t+=1800000){if(!points.has(t)){valid=false;break;}total+=points.get(t);}
+    if(valid){complete++;sum+=total;}
+  }
+  return complete===7?{value:sum/7,label:'Last 7 completed days · provisional intervals'}:
+    {value:null,label:`Waiting for complete data · ${complete}/7 interval days complete`};
+}
 class EacEnergyDashboard extends HTMLElement {
   constructor(){super();this.attachShadow({mode:'open'});this._mode='month';this._value=eacDay(Date.now()).slice(0,7);this._chartMode='energy';this._style='line';this._meters=[];this._request=0;this._statsCache=new Map();this._details=false;}
   connectedCallback(){if(typeof ResizeObserver!=='undefined'){this._resize=new ResizeObserver(()=>{const narrow=this.clientWidth<600;if(narrow!==this._narrow){this._narrow=narrow;if(this._data)this._render();}});this._resize.observe(this);}}
@@ -98,7 +114,7 @@ class EacEnergyDashboard extends HTMLElement {
     this._statsCache.set(key,{data,at:Date.now()});return data;
   }
   async _loadStatistics(request){
-    const d=this._data,ids=d.statistic_ids;this._rows=[];this._average=null;this._statsError='';
+    const d=this._data,ids=d.statistic_ids;this._rows=[];this._average=null;this._averageInfo=null;this._statsError='';
     if(!ids){this._statsError='Update the integration to use register history on this page.';return;}
     const range=this._range(),zone=d.time_zone;
     const outcomes=await Promise.allSettled([
@@ -107,7 +123,8 @@ class EacEnergyDashboard extends HTMLElement {
     ]);
     if(request!==this._request)return;
     if(outcomes[0].status==='fulfilled')this._rows=eacRegisterRows(outcomes[0].value,ids,range,zone);else this._statsError='Register history is unavailable. Try refreshing.';
-    if(outcomes[1].status==='fulfilled')this._average=eacExportAverage(outcomes[1].value,ids.export,zone);
+    this._averageInfo=eacAverageSummary(outcomes[1].status==='fulfilled'?outcomes[1].value:{},ids.export,d);
+    this._average=this._averageInfo.value;
   }
   async _selectPeriod(){const request=++this._request;this._busy=true;this._rows=[];this._statsError='';this._render();try{await this._loadStatistics(request);}finally{if(request===this._request){this._busy=false;this._render();}}}
   _when(t,onlyTime=false){if(!t)return 'Not available';return new Date(t).toLocaleString(undefined,{timeZone:this._data?.time_zone||'Asia/Nicosia',...(onlyTime?{}:{month:'short',day:'numeric'}),hour:'2-digit',minute:'2-digit',hour12:false});}
@@ -174,8 +191,8 @@ class EacEnergyDashboard extends HTMLElement {
       <section class="panel chart-panel"><div class="section-head"><div><div class="eyebrow">YOUR ENERGY OVER TIME</div><h2>Import vs export</h2></div><div class="chart-controls">${!provisional?`<select id="chart-mode" aria-label="Chart measurement"><option value="energy" ${this._chartMode==='energy'?'selected':''}>${range.period==='month'?'Monthly':'Daily'} energy · kWh</option><option value="power" ${this._chartMode==='power'?'selected':''}>Half-hour power · kW</option></select>`:'<span class="badge">Half-hour power · kW</span>'}${!rawChart?`<div class="segmented small"><button data-style="line" class="${this._style==='line'?'active':''}" aria-pressed="${this._style==='line'}">Line</button><button data-style="bar" class="${this._style==='bar'?'active':''}" aria-pressed="${this._style==='bar'}">Bars</button></div>`:''}</div></div><div class="legend"><span class="blue">● Grid import</span><span class="gold">● Solar export</span>${rawChart?'':'<span class="purple">● Net balance</span>'}</div>${this._busy?'<div class="empty" role="status">Loading chart…</div>':this._chart(chart,rawChart)}<p class="chart-note">${esc(dateDetails)}</p>${provisional?`<p class="chart-note">${fallback?'Daily register totals are not available yet. Showing provisional half-hour totals. ':''}Received through ${esc(this._when(through))}. Missing intervals are excluded; totals may be revised.</p>`:''}</section>
       <div class="section-divider"><div><div class="eyebrow">UNDERSTAND YOUR PATTERNS</div><h2>Beyond the totals</h2></div><span class="muted">Based on retained history · independent of selected period</span></div>
       <div class="insight-grid"><section class="panel surplus"><div class="section-head"><div><h2>Usual surplus-solar hours</h2><p class="muted">When you typically send energy back to the grid.</p></div><span class="sun">☀</span></div>${this._surplus()}<p class="chart-note">Average export across ${d.window_days} retained days. Observed zeros count; missing samples do not. Historical pattern, not a forecast.</p></section>
-      <section class="panel habits"><div class="habit"><div><span class="muted">Avg. daily solar export</span><p>Last 7 completed days</p></div><strong class="gold">${n(this._average)} <small>kWh/day</small></strong></div><div class="habit"><div><span class="muted">Overnight grid demand</span><p>${hour(d.night_start_hour)}–${hour(d.night_end_hour)} · ${d.complete_nights} complete nights</p></div><strong>${n(Number.isFinite(d.overnight_baseline_kw)?d.overnight_baseline_kw*1000:null,0)} <small>W</small></strong></div><div class="habit"><div><span class="muted">Highest half-hour demand</span><p>${esc(this._when(d.peak_import_at))}</p></div><strong>${n(d.peak_import_kw,2)} <small>kW</small></strong></div><p class="chart-note">Overnight demand includes EV charging and heating. A dash means insufficient readings.</p></section></div>
-      <section class="panel metadata"><div class="metadata-top"><div><span class="muted">Your tariff</span><strong>${esc(d.tariff?.code||'Unknown')}</strong><span class="muted">Reported by DSO · prices not inferred</span></div><div class="coverage"><span>Half-hour coverage · ${d.window_days} days</span><div class="coverage-track"><i style="width:${Math.max(0,Math.min(100,d.import_coverage_percent||0))}%"></i></div><span>Import ${n(d.import_coverage_percent)}% · export ${n(d.export_coverage_percent)}%</span></div></div><details ${this._details?'open':''}><summary>Meter details & how to read this page</summary><div class="detail-grid"><div><h3>Meter & connection</h3><p>${esc(d.model||'Model unavailable')}<br>${esc(d.phases||'—')} phases · ${esc(d.load_entitlement||'—')} ${esc(d.load_entitlement_unit||'')}<br>Tariff checked ${esc(this._when(d.tariff?.retrieved_at))}<br>Last portal fetch ${esc(this._when(d.fetched_at))}</p></div><div><h3>What these figures measure</h3><p>Grid import and export only. Solar used directly at home and total solar generation require inverter data. Negative net means more exported than imported; it is not a payment credit.</p></div><div><h3>Coverage & calculation</h3><p>Missing readings stay missing. Seven complete daily register changes are required for the export average. Overnight baseline is the median of complete nights. Change history length and overnight hours in the integration options.</p></div></div></details></section>
+      <section class="panel habits"><div class="habit"><div><span class="muted">Avg. daily solar export</span><p>${esc(this._averageInfo?.label||'Last 7 completed days')}</p></div><strong class="gold">${n(this._average)} <small>kWh/day</small></strong></div><div class="habit"><div><span class="muted">Overnight grid demand</span><p>${hour(d.night_start_hour)}–${hour(d.night_end_hour)} · ${d.complete_nights} complete nights</p></div><strong>${n(Number.isFinite(d.overnight_baseline_kw)?d.overnight_baseline_kw*1000:null,0)} <small>W</small></strong></div><div class="habit"><div><span class="muted">Highest half-hour demand</span><p>${esc(this._when(d.peak_import_at))}</p></div><strong>${n(d.peak_import_kw,2)} <small>kW</small></strong></div><p class="chart-note">Overnight demand includes EV charging and heating. A dash means insufficient readings.</p></section></div>
+      <section class="panel metadata"><div class="metadata-top"><div><span class="muted">Your tariff</span><strong>${esc(d.tariff?.code||'Unknown')}</strong><span class="muted">Reported by DSO · prices not inferred</span></div><div class="coverage"><span>Half-hour coverage · ${d.window_days} days</span><div class="coverage-track"><i style="width:${Math.max(0,Math.min(100,d.import_coverage_percent||0))}%"></i></div><span>Import ${n(d.import_coverage_percent)}% · export ${n(d.export_coverage_percent)}%</span></div></div><details ${this._details?'open':''}><summary>Meter details & how to read this page</summary><div class="detail-grid"><div><h3>Meter & connection</h3><p>${esc(d.model||'Model unavailable')}<br>${esc(d.phases||'—')} phases · ${esc(d.load_entitlement||'—')} ${esc(d.load_entitlement_unit||'')}<br>Tariff checked ${esc(this._when(d.tariff?.retrieved_at))}<br>Last portal fetch ${esc(this._when(d.fetched_at))}</p></div><div><h3>What these figures measure</h3><p>Grid import and export only. Solar used directly at home and total solar generation require inverter data. Negative net means more exported than imported; it is not a payment credit.</p></div><div><h3>Coverage & calculation</h3><p>Missing readings stay missing. The export average requires seven complete calendar days. If daily registers are pending, a complete seven-day set of half-hour exports supplies a provisional average. Partial days are never treated as zero. Overnight baseline is the median of complete nights. Change history length and overnight hours in the integration options.</p></div></div></details></section>
       <footer>Powered by your EAC DSO readings · No live inverter data</footer></main>`;
     this._events();
   }
