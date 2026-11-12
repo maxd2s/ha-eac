@@ -52,3 +52,22 @@ test('permission failure clears profile and previous totals',async()=>{
  const card=new Card();card._render=()=>{};card._data={tariff:{code:'PRIVATE'}};card._rows=[{values:[1,2,-1]}];card._hass={callWS:async()=>{throw Error('denied')}};
  await card._load();assert.equal(card._data,null);assert.equal(card._rows.length,0);assert.match(card._error,/access permissions/);
 });
+const selection=get('eacSelection');
+test('yesterday uses available intervals while daily registers are pending, then prefers registers',()=>{
+ const range=period('yesterday','',zone,Date.parse('2026-04-20T10:00:00+03:00'));
+ const profile={time_zone:zone,points:Array.from({length:48},(_,i)=>[range.start+(i+1)*1800000,.2,.1])};
+ const pending=selection(profile,range,[]);
+ assert.equal(pending.fallback,true);assert.equal(pending.expected,48);assert.equal(pending.totals.paired,48);assert(Math.abs(pending.totals.imported-9.6)<1e-9);
+ const final=selection(profile,range,[{t:range.start,values:[10,5,5]}]);
+ assert.equal(final.provisional,false);assert.equal(final.totals.imported,10);
+});
+test('past-day fallback preserves gaps and never enters month or week totals',()=>{
+ const range=period('day','2026-10-25',zone);
+ const profile={time_zone:zone,points:[[range.start+1800000,1,0],[range.start+5400000,2,null]]};
+ const partial=selection(profile,range,[]);
+ assert.equal(partial.expected,50);assert.equal(partial.totals.paired,1);assert.equal(partial.totals.net,1);
+ for(const multi of [period('month','2026-10',zone),period('week','',zone,range.end+86400000)]) {
+  const r=selection(profile,multi,[]);assert.equal(r.provisional,false);assert.equal(r.totals.imported,null);
+ }
+ assert.equal(selection({points:[]},range,[]).totals.imported,null);
+});

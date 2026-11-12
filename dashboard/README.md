@@ -31,7 +31,11 @@ for register energy. Patterns and demand insights below the main chart use the
 retained window, explicitly independent of the selected period. Expand the
 bottom section for meter details and calculation notes.
 
-**Data semantics:** Today is never added to historical register totals. Net
+**Data semantics:** Today is never added to historical register totals. If a
+single past day has half-hour readings but no directional register changes yet,
+the page shows explicitly provisional interval totals with paired coverage. It
+automatically prefers register totals when they arrive; weeks, months and years
+never use this fallback. Net
 register totals use the matched register series, not unmatched directional
 sums. Today's net uses paired intervals; independent import/export totals may
 cover different intervals. Missing values show dashes and break chart lines.
