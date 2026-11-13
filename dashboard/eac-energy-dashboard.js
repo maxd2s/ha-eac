@@ -85,7 +85,7 @@ function eacAverageSummary(result, id, profile, now=Date.now()) {
     {value:null,label:`Waiting for complete data · ${complete}/7 interval days complete`};
 }
 class EacEnergyDashboard extends HTMLElement {
-  constructor(){super();this.attachShadow({mode:'open'});this._mode='month';this._value=eacDay(Date.now()).slice(0,7);this._chartMode='energy';this._style='line';this._meters=[];this._request=0;this._statsCache=new Map();this._details=false;}
+  constructor(){super();this.attachShadow({mode:'open'});this._mode='today';this._value=eacDay(Date.now());this._chartMode='energy';this._style='line';this._meters=[];this._request=0;this._statsCache=new Map();this._details=false;}
   connectedCallback(){if(typeof ResizeObserver!=='undefined'){this._resize=new ResizeObserver(()=>{const narrow=this.clientWidth<600;if(narrow!==this._narrow){this._narrow=narrow;if(this._data)this._render();}});this._resize.observe(this);}}
   disconnectedCallback(){this._resize?.disconnect();}
   setConfig(config){this._config=config;this._entity=config.entity||'';}
