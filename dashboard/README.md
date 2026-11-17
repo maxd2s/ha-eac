@@ -26,7 +26,7 @@ history identifiers for the readable meter selected in the page. An optional
 calendar day with an hourly energy chart; 7 days shows the last
 seven completed calendar days; Month and Year show daily/monthly register
 changes; Custom opens a picker for one calendar date. The period selector controls both the
-totals and the main chart. Use the chart menu for half-hour power, and Line/Bars
+totals and the main chart. Use the chart menu for half-hour power, and Lines + balance/Bars
 for energy charts. Yesterday combines each pair of half-hour readings into hourly
 kWh, preserving missing hours as gaps and 23/25-hour daylight-saving days.
 Its summary still prefers daily register totals; hourly readings can differ. Patterns and demand insights below the main chart use the
@@ -133,3 +133,5 @@ Configure retention (7–90 calendar days, default 30) and overnight hours
 such as 22:00–06:00, is supported. Refresh reads HA's cache; it does not trigger a
 new DSO request. The shared profile endpoint enforces HA entity read permissions.
 Missing channels, tariff codes and nights remain unknown; import-only meters work.
+
+Energy charts default to import/export lines with translucent purple net-balance bars. Positive bars mean more imported; negative bars mean more exported. The Bars option displays all three series as bars.
