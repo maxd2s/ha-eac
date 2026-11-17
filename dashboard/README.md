@@ -23,11 +23,13 @@ history identifiers for the readable meter selected in the page. An optional
 `entity` can select the initial Profile coverage entity.
 
 **Using the page:** Today shows provisional intervals; Yesterday selects the preceding Cyprus
-calendar day; 7 days shows the last
+calendar day with an hourly energy chart; 7 days shows the last
 seven completed calendar days; Month and Year show daily/monthly register
 changes; Custom opens a picker for one calendar date. The period selector controls both the
 totals and the main chart. Use the chart menu for half-hour power, and Line/Bars
-for register energy. Patterns and demand insights below the main chart use the
+for energy charts. Yesterday combines each pair of half-hour readings into hourly
+kWh, preserving missing hours as gaps and 23/25-hour daylight-saving days.
+Its summary still prefers daily register totals; hourly readings can differ. Patterns and demand insights below the main chart use the
 retained window, explicitly independent of the selected period. Expand the
 bottom section for meter details and calculation notes.
 

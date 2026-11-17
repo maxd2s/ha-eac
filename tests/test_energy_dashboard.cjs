@@ -98,3 +98,31 @@ test('average completeness follows spring and autumn DST day lengths',()=>{
   profile.points.pop();assert.equal(averageSummary({},ids.export,profile,now).value,null);
  }
 });
+const hourly=get('eacHourly'),intervalRows=get('eacIntervals');
+test('hourly energy pairs interval ends, excludes the preceding midnight and keeps gaps unknown',()=>{
+ const range=period('day','2026-04-19',zone);
+ const profile={time_zone:zone,points:[[range.start,999,999],[range.start+1800000,.2,.1],[range.start+3600000,.3,.1],[range.start+5400000,5,0],[range.start+7200000,null,0],[range.end-1800000,1,0],[range.end,2,0]]};
+ const hours=hourly(intervalRows(profile,range),range);
+ assert.equal(hours.length,24);assert.equal(hours[0].values[0],.5);assert.equal(hours[0].values[1],.2);assert.equal(hours[0].values[2],.3);
+ assert.equal(hours[1].values[0],null);assert.equal(hours[1].values[1],0);assert.equal(hours[1].values[2],null);
+ assert.equal(hours[2].values[1],null);assert.equal(hours[23].values[0],3);
+});
+test('hourly chart preserves both repeated DST hours and skips the missing spring hour',()=>{
+ for(const [day,count] of [['2026-03-29',23],['2026-10-25',25]]){
+  const range=period('day',day,zone),points=[];
+  for(let t=range.start+1800000;t<=range.end;t+=1800000)points.push([t,.5,.25]);
+  const hours=hourly(intervalRows({time_zone:zone,points},range),range);
+  assert.equal(hours.length,count);assert.equal(totals(hours).imported,count);
+  assert.equal(new Set(hours.map(r=>r.t)).size,count);
+ }
+});
+test('Yesterday renders hourly data even when daily registers exist and resets a previous power selection',()=>{
+ const card=new Card();card._events=()=>{};card.setConfig({});card._mode='yesterday';
+ const range=card._range();card._data={time_zone:zone,points:[[range.start+1800000,.2,.1],[range.start+3600000,.3,.1]],window_days:30,available:true};
+ card._rows=[{t:range.start,key:range.first,values:[6,17,-11]}];card._render();
+ assert.match(card.shadowRoot.innerHTML,/Hourly energy · kWh/);assert.match(card.shadowRoot.innerHTML,/Hourly energy import and export chart/);
+ assert.match(card.shadowRoot.innerHTML,/0.5 kWh/);assert.match(card.shadowRoot.innerHTML,/Register changes/);
+ const button={dataset:{period:'yesterday'}},stub={};
+ card.shadowRoot.querySelectorAll=s=>s==='[data-period]'?[button]:[];card.shadowRoot.querySelector=()=>stub;
+ card._selectPeriod=()=>{};card._chartMode='power';Card.prototype._events.call(card);button.onclick();assert.equal(card._chartMode,'energy');
+});

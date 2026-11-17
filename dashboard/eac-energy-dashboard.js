@@ -48,6 +48,18 @@ function eacTotals(rows) {
 function eacIntervals(profile, range) {
   return (profile.points||[]).filter(p=>p[0]>range.start&&p[0]<=range.end).map(p=>({t:p[0],key:eacDay(p[0]-1,profile.time_zone),values:[p[1],p[2],Number.isFinite(p[1])&&Number.isFinite(p[2])?p[1]-p[2]:null]}));
 }
+// Interval timestamps close the preceding half-hour. Keep incomplete hours unknown.
+function eacHourly(rows, range) {
+  const points=new Map(rows.map(row=>[row.t,row.values]));
+  const hours=[];
+  for(let t=range.start;t<range.end;t+=3600000){
+    const first=points.get(t+1800000),second=points.get(t+3600000);
+    const values=[0,1].map(i=>Number.isFinite(first?.[i])&&Number.isFinite(second?.[i])?first[i]+second[i]:null);
+    values.push(values.every(Number.isFinite)?values[0]-values[1]:null);
+    hours.push({t,key:String(t),values});
+  }
+  return hours;
+}
 function eacProvisional(rows) {
   // Both directions must be observed at the same time to claim a net balance.
   const paired=rows.filter(r=>Number.isFinite(r.values[0])&&Number.isFinite(r.values[1]));
@@ -129,7 +141,7 @@ class EacEnergyDashboard extends HTMLElement {
   async _selectPeriod(){const request=++this._request;this._busy=true;this._rows=[];this._statsError='';this._render();try{await this._loadStatistics(request);}finally{if(request===this._request){this._busy=false;this._render();}}}
   _when(t,onlyTime=false){if(!t)return 'Not available';return new Date(t).toLocaleString(undefined,{timeZone:this._data?.time_zone||'Asia/Nicosia',...(onlyTime?{}:{month:'short',day:'numeric'}),hour:'2-digit',minute:'2-digit',hour12:false});}
   _label(){const r=this._range();if(this._mode==='today')return 'Today so far';if(this._mode==='yesterday')return 'Yesterday · '+new Date(r.start+12*3600000).toLocaleDateString(undefined,{timeZone:this._data.time_zone,month:'short',day:'numeric'});if(this._mode==='week')return 'Last 7 completed days';if(this._mode==='year')return this._value;return new Date(r.start+12*3600000).toLocaleDateString(undefined,{timeZone:this._data.time_zone,year:'numeric',month:'long',...(this._mode==='day'?{day:'numeric'}:{})});}
-  _chart(rows,power=false){
+  _chart(rows,power=false,hourly=false){
     if(!rows.some(r=>r.values.some(Number.isFinite)))return '<div class="empty"><ha-icon icon="mdi:chart-line"></ha-icon><strong>No readings for this selection</strong><span>Missing data is not zero. Try another period.</span></div>';
     const zone=this._data.time_zone,range=this._range();
     const from=range.start,to=Math.min(range.end,eacMidnight(eacShift(eacDay(Date.now(),zone),1),zone));
@@ -138,10 +150,10 @@ class EacEnergyDashboard extends HTMLElement {
     const max=Math.max(1,...values),min=Math.min(0,...values),span=max-min;
     const high=max+span*.12,low=min<0?min-span*.08:0;
     const x=t=>52+(t-from)/(to-from)*plotWidth,y=v=>242-(v-low)/(high-low)*204;
-    const label=t=>new Date(t).toLocaleString(undefined,{timeZone:zone,...(power&&['day','today','yesterday'].includes(this._mode)?{hour:'2-digit',minute:'2-digit',hour12:false}:this._mode==='year'?{month:'short'}:{month:'short',day:'numeric'})});
+    const label=t=>new Date(t).toLocaleString(undefined,{timeZone:zone,...((power||hourly)&&['day','today','yesterday'].includes(this._mode)?{hour:'2-digit',minute:'2-digit',hour12:false}:this._mode==='year'?{month:'short'}:{month:'short',day:'numeric'})});
     let svg=[0,1,2,3,4].map(i=>{const v=low+(high-low)*i/4;return `<line x1="52" x2="${width-40}" y1="${y(v)}" y2="${y(v)}" class="gridline"/><text x="42" y="${y(v)+4}" text-anchor="end">${eacNumber(v)}</text>`;}).join('');
     svg+=`<line x1="52" x2="${width-40}" y1="${y(0)}" y2="${y(0)}" stroke="var(--muted)" opacity=".35"/>`;
-    svg+=`<text x="52" y="18">${power?'kW · half-hour average':'kWh'}</text>`;
+    svg+=`<text x="52" y="18">${power?'kW · half-hour average':hourly?'kWh · hourly energy':'kWh'}</text>`;
     svg+=[0,1,2,3,4].map(i=>{const t=from+(to-from)*i/4;return `<text x="${x(t)}" y="270" text-anchor="${i===0?'start':i===4?'end':'middle'}">${eacEscape(label(t))}</text>`;}).join('');
     const count=power?2:3;
     for(let index=0;index<count;index++){
@@ -149,15 +161,16 @@ class EacEnergyDashboard extends HTMLElement {
       for(const row of rows){
         const value=row.values[index];if(!Number.isFinite(value)){prev=null;continue;}
         const v=power?value*2:value;
-        const adjacent=prev&&(power?row.t-prev.t===1800000:this._mode==='year'?row.key.slice(0,7)===eacShift(prev.key,32).slice(0,7):row.key===eacShift(prev.key,1));
-        const title=eacEscape(`${label(row.t)} · ${['Grid import','Solar export','Net balance'][index]}: ${eacNumber(v,3)} ${power?'kW':'kWh'}`);
-        if(this._style==='bar'&&!power){const units=Math.max(1,(to-from)/(this._mode==='year'?31:1)/86400000);const width=Math.min(22,plotWidth/units/4);const xx=x(row.t)+index*width;svg+=`<rect x="${xx}" y="${Math.min(y(v),y(0))}" width="${width*.82}" height="${Math.max(1,Math.abs(y(0)-y(v)))}" rx="2" fill="${EAC_COLORS[index]}"><title>${title}</title></rect>`;}
+        const adjacent=prev&&(power?row.t-prev.t===1800000:hourly?row.t-prev.t===3600000:this._mode==='year'?row.key.slice(0,7)===eacShift(prev.key,32).slice(0,7):row.key===eacShift(prev.key,1));
+        const stamp=hourly?new Date(row.t).toLocaleString(undefined,{timeZone:zone,hour:'2-digit',minute:'2-digit',hour12:false,timeZoneName:'shortOffset'})+'–'+label(row.t+3600000):label(row.t);
+        const title=eacEscape(`${stamp} · ${['Grid import','Solar export','Net balance'][index]}: ${eacNumber(v,3)} ${power?'kW':'kWh'}`);
+        if(this._style==='bar'&&!power){const units=Math.max(1,hourly?(to-from)/3600000:(to-from)/(this._mode==='year'?31:1)/86400000);const width=Math.min(22,plotWidth/units/4);const xx=x(row.t)+index*width;svg+=`<rect x="${xx}" y="${Math.min(y(v),y(0))}" width="${width*.82}" height="${Math.max(1,Math.abs(y(0)-y(v)))}" rx="2" fill="${EAC_COLORS[index]}"><title>${title}</title></rect>`;}
         else {path.push(`${adjacent?'L':'M'}${x(row.t).toFixed(2)},${y(v).toFixed(2)}`);svg+=`<circle cx="${x(row.t)}" cy="${y(v)}" r="${power?1.8:3.2}" fill="${EAC_COLORS[index]}"><title>${title}</title></circle>`;}
         prev=row;
       }
       if(this._style!=='bar'||power)svg+=`<path d="${path.join(' ')}" stroke="${EAC_COLORS[index]}"/>`;
     }
-    return `<svg class="timeline" viewBox="0 0 ${width} 290" role="img" aria-label="${power?'Half-hour power':'Energy'} import and export chart">${svg}</svg>`;
+    return `<svg class="timeline" viewBox="0 0 ${width} 290" role="img" aria-label="${power?'Half-hour power':hourly?'Hourly energy':'Energy'} import and export chart">${svg}</svg>`;
   }
   _surplus(){
     const slots=this._data.surplus_by_half_hour||[],top=Math.max(.1,...slots.map(p=>Number.isFinite(p[1])?p[1]:0));
@@ -176,19 +189,20 @@ class EacEnergyDashboard extends HTMLElement {
     const current=this._mode==='month'&&this._value===eacDay(Date.now(),d.time_zone).slice(0,7)||this._mode==='year'&&this._value===eacDay(Date.now(),d.time_zone).slice(0,4);
     const source=fallback?'Provisional · daily register pending':today?'Provisional half-hour readings':`Register changes${current?' · period in progress':''}`;
     const through=provisional?intervals.at(-1)?.t:d.data_through;
-    const rawChart=this._chartMode==='power'||provisional;
-    const chart=rawChart?intervals:this._rows||[];
+    const hourly=this._mode==='yesterday'&&this._chartMode!=='power';
+    const rawChart=this._chartMode==='power'||(provisional&&!hourly);
+    const chart=hourly?eacHourly(intervals,range):rawChart?intervals:this._rows||[];
     const input=this._mode==='day'?`<input id="date" aria-label="Selected day" type="date" value="${esc(this._value)}" max="${eacDay(Date.now(),d.time_zone)}">`:this._mode==='month'?`<input id="date" aria-label="Selected month" type="month" value="${esc(this._value)}" max="${eacDay(Date.now(),d.time_zone).slice(0,7)}">`:this._mode==='year'?`<input id="date" aria-label="Selected year" type="number" min="2000" max="${new Date().getFullYear()}" value="${esc(this._value)}">`:'';
     const kpi=(label,value,color,caption)=>`<div class="metric ${color}"><div class="metric-label">${label}</div><div class="metric-value">${available?n(value):'—'} <span>kWh</span></div><div class="muted">${caption}</div></div>`;
     const hour=h=>String(h??0).padStart(2,'0')+':00';
-    const dateDetails=rawChart?`Half-hour readings available within the last ${d.window_days} days. Lines break at gaps.`:'Midnight registers close the preceding day. Gaps accumulate on the next reading; missing dates are not zero.';
+    const dateDetails=hourly?'Hourly energy from half-hour readings; both halves are required per direction. Gaps are not zero. Daily register totals above may differ.':rawChart?`Half-hour readings available within the last ${d.window_days} days. Lines break at gaps.`:'Midnight registers close the preceding day. Gaps accumulate on the next reading; missing dates are not zero.';
     const sumScope=provisional?`${totals.paired||0}${fallback?'/'+expected:''} paired half-hours · net uses matching intervals`:'Net uses the matched register series; mismatched import/export dates may differ.';
     this.shadowRoot.innerHTML=`<style>${css}</style><main>
       <header><div><div class="eyebrow"><span class="sun">✦</span> YOUR ENERGY, AT A GLANCE</div><h1>Solar & grid</h1><p class="subtitle">See what you buy, what you send back, and when.</p></div><div class="header-tools"><select id="meter" aria-label="Meter">${this._meters.map(m=>`<option value="${esc(m.entity_id)}" ${m.entity_id===this._entity?'selected':''}>${esc(m.name)}</option>`).join('')}</select><button class="refresh" id="refresh" aria-label="Refresh cached readings" title="Refresh from Home Assistant">↻</button></div></header>
       <div class="status"><span class="dot ${d.available?'':'offline'}"></span><span>${d.available?'DSO readings':'Cached readings · portal unavailable'} through <strong>${esc(this._when(d.data_through))}</strong></span><span class="checked" title="Time of the last successful DSO fetch, not the browser refresh">${d.available?'Last checked':'Last successful check'} <strong>${esc(this._when(d.fetched_at))}</strong></span><span class="status-note">Delayed data · Cyprus time</span></div>
       <nav class="toolbar" aria-label="Period controls"><div class="segmented">${[['today','Today'],['yesterday','Yesterday'],['week','7 days'],['month','Month'],['year','Year'],['day','Custom']].map(([key,label])=>`<button data-period="${key}" aria-pressed="${this._mode===key}" class="${this._mode===key?'active':''}">${label}</button>`).join('')}</div><div class="date-control">${input}<span>${esc(this._label())}</span></div></nav>
       <section class="panel summary" aria-busy="${this._busy}" aria-label="Selected period energy balance"><div class="summary-top"><h2>${esc(this._label())}</h2><span class="badge">${esc(source)}</span></div><div class="metrics">${kpi('↙ From the grid',totals.imported,'blue','Electricity you bought')}${kpi('↗ To the grid',totals.exported,'gold','Solar electricity exported')}<div class="metric net"><div class="metric-label">⇄ Net grid balance</div><div class="metric-value">${n(net)} <span>kWh</span></div><div class="muted">${direction}</div></div></div><div class="summary-foot"><span>${esc(this._busy?'Loading selected period…':this._statsError||sumScope)}</span><span>Import − export · energy, not money</span></div></section>
-      <section class="panel chart-panel"><div class="section-head"><div><div class="eyebrow">YOUR ENERGY OVER TIME</div><h2>Import vs export</h2></div><div class="chart-controls">${!provisional?`<select id="chart-mode" aria-label="Chart measurement"><option value="energy" ${this._chartMode==='energy'?'selected':''}>${range.period==='month'?'Monthly':'Daily'} energy · kWh</option><option value="power" ${this._chartMode==='power'?'selected':''}>Half-hour power · kW</option></select>`:'<span class="badge">Half-hour power · kW</span>'}${!rawChart?`<div class="segmented small"><button data-style="line" class="${this._style==='line'?'active':''}" aria-pressed="${this._style==='line'}">Line</button><button data-style="bar" class="${this._style==='bar'?'active':''}" aria-pressed="${this._style==='bar'}">Bars</button></div>`:''}</div></div><div class="legend"><span class="blue">● Grid import</span><span class="gold">● Solar export</span>${rawChart?'':'<span class="purple">● Net balance</span>'}</div>${this._busy?'<div class="empty" role="status">Loading chart…</div>':this._chart(chart,rawChart)}<p class="chart-note">${esc(dateDetails)}</p>${provisional?`<p class="chart-note">${fallback?'Daily register totals are not available yet. Showing provisional half-hour totals. ':''}Received through ${esc(this._when(through))}. Missing intervals are excluded; totals may be revised.</p>`:''}</section>
+      <section class="panel chart-panel"><div class="section-head"><div><div class="eyebrow">YOUR ENERGY OVER TIME</div><h2>Import vs export</h2></div><div class="chart-controls">${!provisional||this._mode==='yesterday'?`<select id="chart-mode" aria-label="Chart measurement"><option value="energy" ${this._chartMode==='energy'?'selected':''}>${hourly||this._mode==='yesterday'?'Hourly':range.period==='month'?'Monthly':'Daily'} energy · kWh</option><option value="power" ${this._chartMode==='power'?'selected':''}>Half-hour power · kW</option></select>`:'<span class="badge">Half-hour power · kW</span>'}${!rawChart?`<div class="segmented small"><button data-style="line" class="${this._style==='line'?'active':''}" aria-pressed="${this._style==='line'}">Line</button><button data-style="bar" class="${this._style==='bar'?'active':''}" aria-pressed="${this._style==='bar'}">Bars</button></div>`:''}</div></div><div class="legend"><span class="blue">● Grid import</span><span class="gold">● Solar export</span>${rawChart?'':'<span class="purple">● Net balance</span>'}</div>${this._busy?'<div class="empty" role="status">Loading chart…</div>':this._chart(chart,rawChart,hourly)}<p class="chart-note">${esc(dateDetails)}</p>${provisional?`<p class="chart-note">${fallback?'Daily register totals are not available yet. Showing provisional half-hour totals. ':''}Received through ${esc(this._when(through))}. Missing intervals are excluded; totals may be revised.</p>`:''}</section>
       <div class="section-divider"><div><div class="eyebrow">UNDERSTAND YOUR PATTERNS</div><h2>Beyond the totals</h2></div><span class="muted">Based on retained history · independent of selected period</span></div>
       <div class="insight-grid"><section class="panel surplus"><div class="section-head"><div><h2>Usual surplus-solar hours</h2><p class="muted">When you typically send energy back to the grid.</p></div><span class="sun">☀</span></div>${this._surplus()}<p class="chart-note">Average export across ${d.window_days} retained days. Observed zeros count; missing samples do not. Historical pattern, not a forecast.</p></section>
       <section class="panel habits"><div class="habit"><div><span class="muted">Avg. daily solar export</span><p>${esc(this._averageInfo?.label||'Last 7 completed days')}</p></div><strong class="gold">${n(this._average)} <small>kWh/day</small></strong></div><div class="habit"><div><span class="muted">Overnight grid demand</span><p>${hour(d.night_start_hour)}–${hour(d.night_end_hour)} · ${d.complete_nights} complete nights</p></div><strong>${n(Number.isFinite(d.overnight_baseline_kw)?d.overnight_baseline_kw*1000:null,0)} <small>W</small></strong></div><div class="habit"><div><span class="muted">Highest half-hour demand</span><p>${esc(this._when(d.peak_import_at))}</p></div><strong>${n(d.peak_import_kw,2)} <small>kW</small></strong></div><p class="chart-note">Overnight demand includes EV charging and heating. A dash means insufficient readings.</p></section></div>
@@ -200,7 +214,7 @@ class EacEnergyDashboard extends HTMLElement {
     const root=this.shadowRoot;
     root.querySelector('#meter').onchange=e=>{this._entity=e.target.value;this._data=null;this._rows=[];this._average=null;this._statsCache.clear();this._load();};
     root.querySelector('#refresh').onclick=()=>{this._statsCache.clear();this._load();};
-    for(const button of root.querySelectorAll('[data-period]'))button.onclick=()=>{this._mode=button.dataset.period;const today=eacDay(Date.now(),this._data.time_zone);this._value=this._mode==='year'?today.slice(0,4):this._mode==='month'?today.slice(0,7):today;this._selectPeriod();};
+    for(const button of root.querySelectorAll('[data-period]'))button.onclick=()=>{this._mode=button.dataset.period;if(this._mode==='yesterday')this._chartMode='energy';const today=eacDay(Date.now(),this._data.time_zone);this._value=this._mode==='year'?today.slice(0,4):this._mode==='month'?today.slice(0,7):today;this._selectPeriod();};
     const date=root.querySelector('#date');if(date)date.onchange=e=>{if(!e.target.value||!e.target.checkValidity())return;this._value=e.target.value;this._selectPeriod();};
     const mode=root.querySelector('#chart-mode');if(mode)mode.onchange=e=>{this._chartMode=e.target.value;this._render();};
     for(const button of root.querySelectorAll('[data-style]'))button.onclick=()=>{this._style=button.dataset.style;this._render();};
